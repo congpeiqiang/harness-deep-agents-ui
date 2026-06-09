@@ -115,7 +115,7 @@ function HomePageInner({
       <div className="flex h-screen flex-col">
         <header className="flex h-16 items-center justify-between border-b border-border px-6">
           <div className="flex items-center gap-4">
-            <h1 className="text-xl font-semibold">但问智能平台</h1>
+            <h1 className="text-xl font-semibold">私人对话平台</h1>
             {!sidebar && (
               <Button
                 variant="ghost"
