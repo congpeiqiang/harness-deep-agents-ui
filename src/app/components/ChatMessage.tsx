@@ -202,21 +202,34 @@ export const ChatMessage = React.memo<ChatMessageProps>(
             </div>
           ) : (
             /* ── AI message ── */
-            hasContent && (
-              <div className={cn("relative flex items-end gap-0")}>
-                <div className="mt-4 overflow-hidden break-words text-sm font-normal leading-[150%] text-primary">
-                  <MarkdownContent
-                    content={messageContent}
-                    streaming={isStreamingMessage}
-                  />
-                </div>
-              </div>
-            )
+            hasContent && (() => {
+                // 提取 <iframe> 标签单独渲染（图表场景）
+                const iframeRegex = /<iframe[^>]*>[^<]*<\/iframe>/g;
+                const iframes = messageContent.match(iframeRegex);
+                const textContent = messageContent.replace(iframeRegex, '').trim();
+                return (
+                  <>
+                    {iframes && iframes.map((html, i) => (
+                      <div key={i} className="my-4 w-full" dangerouslySetInnerHTML={{ __html: html }} />
+                    ))}
+                    {textContent && (
+                      <div className={cn("relative flex items-end gap-0")}>
+                        <div className="mt-4 overflow-hidden break-words text-sm font-normal leading-[150%] text-primary">
+                          <MarkdownContent
+                            content={textContent}
+                            streaming={isStreamingMessage}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()
           )}
           {hasToolCalls && (
             <div className="mt-4 flex w-full flex-col">
               {toolCalls.map((toolCall: ToolCall) => {
-                if (toolCall.name === "task") return null;
+                // Show task subagent calls
                 const toolCallGenUiComponent =
                   ui && ui.length > 0
                     ? ui.find((u) => u.metadata?.tool_call_id === toolCall.id)

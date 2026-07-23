@@ -77,7 +77,8 @@ export function useChat({
   const sendMessage = useCallback(
     (
       content: string,
-      contentBlocks?: ContentBlock.Multimodal.Data[]
+      contentBlocks?: ContentBlock.Multimodal.Data[] = [],
+      configurable?: Record<string, string>
     ) => {
       // Split blocks: images go into content array as image_url format (OpenAI-compatible),
       // PDFs go into additional_kwargs.attachments (backend parses them)
@@ -106,9 +107,10 @@ export function useChat({
         id: uuidv4(),
         type: "human",
         content: messageContent,
-        ...(pdfBlocks.length > 0
-          ? { additional_kwargs: { attachments: pdfBlocks } }
-          : {}),
+        additional_kwargs: {
+          db_name: configurable?.db_name || "aix_report",
+          ...(pdfBlocks.length > 0 ? { attachments: pdfBlocks } : {}),
+        },
       };
       stream.submit(
         { messages: [newMessage] },
@@ -116,7 +118,7 @@ export function useChat({
           optimisticValues: (prev) => ({
             messages: [...(prev.messages ?? []), newMessage],
           }),
-          config: { ...(activeAssistant?.config ?? {}), recursion_limit: 100 },
+          config: { ...(activeAssistant?.config ?? {}), configurable: configurable ?? {}, recursion_limit: 100 },
         }
       );
       // Update thread list immediately when sending a message

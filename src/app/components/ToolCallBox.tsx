@@ -93,7 +93,12 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
     onResume,
     isLoading,
   }) => {
-    const [isExpanded, setIsExpanded] = useState(
+    if (toolCall.name === 'delegate') {
+    console.log('[ToolCallBox-delegate] toolCall keys:', Object.keys(toolCall));
+    console.log('[ToolCallBox-delegate] artifact:', (toolCall as any).artifact);
+    console.log('[ToolCallBox-delegate] result type:', typeof (toolCall as any).result);
+  }
+  const [isExpanded, setIsExpanded] = useState(
       () => !!uiComponent || !!actionRequest
     );
     const [expandedArgs, setExpandedArgs] = useState<Record<string, boolean>>(
@@ -107,7 +112,7 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
         result: toolCall.result,
         status: toolCall.status || "completed",
       };
-    }, [toolCall.name, toolCall.args, toolCall.result, toolCall.status]);
+    }, [toolCall.name, toolCall.args, toolCall.result, toolCall.status, (toolCall as any).artifact]);
 
     const argsKeys = useMemo(() => Object.keys(args), [args]);
     const argsEntries = useMemo(() => Object.entries(args), [args]);
@@ -117,6 +122,7 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
     );
 
     const deferredResult = useDeferredValue(result);
+  if (typeof result === "string" && result.includes("<iframe")) console.log("[ToolCallBox] result is iframe:", result.substring(0, 100));
 
     const serializedResult = useMemo(() => {
       if (!deferredResult) return "";
@@ -257,16 +263,42 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
                     </div>
                   </div>
                 )}
+                {(toolCall as any)?.artifact?.subagent_type && (toolCall as any)?.artifact?.steps && (
+                  <div className="mt-4 rounded-sm border border-blue-200 bg-blue-50/50 p-3">
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      {(toolCall as any).artifact.subagent_type} 执行过程 ({(toolCall as any).artifact.total_steps} 步)
+                    </h4>
+                    <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                      {(toolCall as any).artifact.steps.map((step: any, i: number) => (
+                        <div key={i} className="flex items-start gap-2 text-xs">
+                          <span className="mt-0.5 min-w-[1.5rem] text-center font-mono text-blue-500">
+                            {step.step}
+                          </span>
+                          <span className="font-mono text-blue-400 min-w-[4rem]">
+                            {step.type === "ai" ? "AI" : step.type === "tool_call" ? "TOOL" : step.type}
+                          </span>
+                          <span className="text-gray-600 break-all">
+                            {step.type === "tool_call" ? `${step.name}(${step.args})` : step.content}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {result && (
                   <div className="mt-4">
                     <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       结果
                     </h4>
-                    <div className="max-h-96 overflow-y-auto rounded-sm border border-border bg-muted/40">
-                      <pre className="m-0 overflow-x-auto whitespace-pre p-2 font-mono text-xs leading-7 text-foreground">
-                        {serializedResult}
-                      </pre>
-                    </div>
+                    {(typeof serializedResult === "string" && serializedResult.includes("<iframe")) ? (
+                      <div className="w-full" dangerouslySetInnerHTML={{ __html: serializedResult }} />
+                    ) : (
+                      <div className="max-h-96 overflow-y-auto rounded-sm border border-border bg-muted/40">
+                        <pre className="m-0 overflow-x-auto whitespace-pre p-2 font-mono text-xs leading-7 text-foreground">
+                          {serializedResult}
+                        </pre>
+                      </div>
+                    )}
                   </div>
                 )}
               </>

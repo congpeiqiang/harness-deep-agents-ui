@@ -35,6 +35,7 @@ import { useStickToBottom } from "use-stick-to-bottom";
 import { FilesPopover } from "@/app/components/TasksFilesSidebar";
 import { useFileUpload } from "@/app/hooks/useFileUpload";
 import { ContentBlocksPreview } from "@/app/components/ContentBlocksPreview";
+// import { DatabaseSelector } from "@/app/components/DatabaseSelector";
 import { Label } from "@/components/ui/label";
 
 interface ChatInterfaceProps {
@@ -71,6 +72,7 @@ const getStatusIcon = (status: TodoItem["status"], className?: string) => {
 
 export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const [metaOpen, setMetaOpen] = useState<"tasks" | "files" | null>(null);
+  // const [selectedDb, setSelectedDb] = useState<string>("aix_report");
   const tasksContainerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -116,6 +118,8 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
         submitDisabled
       )
         return;
+      // const configurable = { db_name: selectedDb };
+      // console.log("[DB_SELECT] db_name:", selectedDb);
       sendMessage(messageText, contentBlocks);
       setInput("");
       resetBlocks();
@@ -227,6 +231,12 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           toolCalls: toolCallsWithStatus,
         });
       } else if (message.type === "tool") {
+        if ((message as any).name === "delegate") {
+          console.log("[ChatInterface-delegate] ToolMessage keys:", Object.keys(message));
+          console.log("[ChatInterface-delegate] artifact:", (message as any).artifact);
+          console.log("[ChatInterface-delegate] content type:", typeof message.content);
+          console.log("[ChatInterface-delegate] message:", JSON.parse(JSON.stringify(message)));
+        }
         const toolCallId = message.tool_call_id;
         if (!toolCallId) {
           return;
@@ -244,6 +254,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             ...data.toolCalls[toolCallIndex],
             status: "completed" as const,
             result: extractStringFromMessageContent(message),
+            artifact: (message as any).artifact,
           };
           break;
         }
@@ -595,6 +606,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                 >
                   <Plus className="size-5" />
                   <span className="text-sm">上传 PDF 或图片</span>
+                {/* <DatabaseSelector value={selectedDb} onChange={setSelectedDb} /> */}
                 </Label>
                 <input
                   id="file-input"
