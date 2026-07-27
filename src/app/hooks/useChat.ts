@@ -117,8 +117,9 @@ export function useChat({
         {
           optimisticValues: (prev) => ({
             messages: [...(prev.messages ?? []), newMessage],
+
           }),
-          config: { ...(activeAssistant?.config ?? {}), configurable: configurable ?? {}, recursion_limit: 100 },
+          config: { ...(activeAssistant?.config ?? {}), configurable: configurable ?? {}, recursion_limit: 500 },
         }
       );
       // Update thread list immediately when sending a message
@@ -170,7 +171,7 @@ export function useChat({
       stream.submit(undefined, {
         config: {
           ...(activeAssistant?.config || {}),
-          recursion_limit: 100,
+          recursion_limit: 500,
         },
         ...(hasTaskToolCall
           ? { interruptAfter: ["tools"] }
