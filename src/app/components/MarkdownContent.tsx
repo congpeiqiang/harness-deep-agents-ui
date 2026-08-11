@@ -469,6 +469,20 @@ const markdownComponents = {
     src?: string | Blob;
     alt?: string;
   }) {
+    // 交互式图表引用（![alt](./xxx.html)）：渲染为「打开图表」链接按钮而非坏图。
+    // 实际交互图表由 ChatMessage/附随图表机制渲染；这里只做降级，避免显示裂图。
+    if (typeof src === "string" && src.toLowerCase().endsWith(".html")) {
+      return (
+        <a
+          href={src}
+          target="_blank"
+          rel="noreferrer"
+          className="my-2 inline-block rounded-md border border-border bg-muted/40 px-3 py-1.5 text-sm text-primary hover:bg-muted/60"
+        >
+          📊 {alt || "打开交互式图表"}
+        </a>
+      );
+    }
     const srcUrl = typeof src === "string" ? src : src ? URL.createObjectURL(src) : "";
     return (
       <img

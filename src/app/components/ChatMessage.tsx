@@ -17,6 +17,10 @@ import {
   extractSubAgentContent,
   extractStringFromMessageContent,
 } from "@/app/utils/utils";
+import {
+  extractInteractiveChartIframes,
+  chartToolNames,
+} from "@/app/utils/chart";
 import { cn } from "@/lib/utils";
 // NOTE  MC80OmFIVnBZMlhrdUp2bG43bmx2TG82TVRWSlVRPT06NGI5M2JjYjQ=
 
@@ -66,6 +70,8 @@ interface ChatMessageProps {
   stream?: any;
   onResumeInterrupt?: (value: any) => void;
   graphId?: string;
+  /** 附随图表 HTML（交互式 echarts iframe）。报告呈现消息的图表由同轮生成步骤附随而来。 */
+  chartAttachmentHtml?: string;
 }
 
 function areToolCallsEqual(prevToolCalls: ToolCall[], nextToolCalls: ToolCall[]) {
@@ -105,6 +111,7 @@ export const ChatMessage = React.memo<ChatMessageProps>(
     stream,
     onResumeInterrupt,
     graphId,
+    chartAttachmentHtml,
   }) => {
     const isUser = message.type === "human";
     const isAi = message.type === "ai";
@@ -202,14 +209,34 @@ export const ChatMessage = React.memo<ChatMessageProps>(
             </div>
           ) : (
             /* ── AI message ── */
-            hasContent && (() => {
-                // 提取 <iframe> 标签单独渲染（图表场景）
+            (() => {
+                // 图表 iframe 过滤逻辑抽到 @/app/utils/chart（isInteractiveChartIframe 等）。
+                // 1) 从消息正文提取 <iframe>（图表场景）
                 const iframeRegex = /<iframe[^>]*>[^<]*<\/iframe>/g;
-                const iframes = messageContent.match(iframeRegex);
+                const bodyIframes = extractInteractiveChartIframes(messageContent);
+                // 2) 从工具调用结果中提取图表 iframe（图表引擎生成后存于 toolCalls[].result）
+                //    让图表直接渲染在消息正文，而不只是藏在工具卡片里
+                const toolIframes: string[] = [];
+                toolCalls.forEach((tc) => {
+                  if (!tc.result || typeof tc.result !== "string") return;
+                  const isChartTool = chartToolNames.some(
+                    (n) => tc.name === n || (tc.name || "").includes(n)
+                  );
+                  if (!isChartTool) return;
+                  toolIframes.push(...extractInteractiveChartIframes(tc.result));
+                });
+                const allIframes = [...bodyIframes, ...toolIframes];
+                // 去重：同一 iframe 可能在正文和 tool 结果里重复出现
+                const uniqueIframes = allIframes.filter(
+                  (html, i) => allIframes.indexOf(html) === i
+                );
                 const textContent = messageContent.replace(iframeRegex, '').trim();
                 return (
                   <>
-                    {iframes && iframes.map((html, i) => (
+                    {chartAttachmentHtml && (
+                      <div className="my-4 w-full" dangerouslySetInnerHTML={{ __html: chartAttachmentHtml }} />
+                    )}
+                    {uniqueIframes.map((html, i) => (
                       <div key={i} className="my-4 w-full" dangerouslySetInnerHTML={{ __html: html }} />
                     ))}
                     {textContent && (
@@ -309,7 +336,8 @@ export const ChatMessage = React.memo<ChatMessageProps>(
       prevProps.onResumeInterrupt === nextProps.onResumeInterrupt &&
       prevProps.graphId === nextProps.graphId &&
       prevProps.isLoading === nextProps.isLoading &&
-      prevProps.isStreaming === nextProps.isStreaming;
+      prevProps.isStreaming === nextProps.isStreaming &&
+      prevProps.chartAttachmentHtml === nextProps.chartAttachmentHtml;
 
     return (
       isSameMessage &&

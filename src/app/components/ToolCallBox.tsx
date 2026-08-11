@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ToolCall, ActionRequest, ReviewConfig } from "@/app/types/types";
+import { extractInteractiveChartIframes } from "@/app/utils/chart";
 import { cn } from "@/lib/utils";
 import { LoadExternalComponent } from "@langchain/langgraph-sdk/react-ui";
 import { ToolApprovalInterrupt } from "@/app/components/ToolApprovalInterrupt";
@@ -290,15 +291,26 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
                     <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       结果
                     </h4>
-                    {(typeof serializedResult === "string" && serializedResult.includes("<iframe")) ? (
-                      <div className="w-full" dangerouslySetInnerHTML={{ __html: serializedResult }} />
-                    ) : (
-                      <div className="max-h-96 overflow-y-auto rounded-sm border border-border bg-muted/40">
-                        <pre className="m-0 overflow-x-auto whitespace-pre p-2 font-mono text-xs leading-7 text-foreground">
-                          {serializedResult}
-                        </pre>
-                      </div>
-                    )}
+                    {(() => {
+                      // 只渲染「交互式」图表 iframe（含 echarts.init / CDN），
+                      // 丢弃静态 SVG iframe，避免同一图表出现可交互+静态两份。
+                      if (typeof serializedResult === "string" && serializedResult.includes("<iframe")) {
+                        const interactive = extractInteractiveChartIframes(serializedResult);
+                        if (interactive.length > 0) {
+                          return (
+                            <div className="w-full" dangerouslySetInnerHTML={{ __html: interactive[0] }} />
+                          );
+                        }
+                        // 无交互式 iframe（可能是静态 SVG）→ 回退到文本展示
+                      }
+                      return (
+                        <div className="max-h-96 overflow-y-auto rounded-sm border border-border bg-muted/40">
+                          <pre className="m-0 overflow-x-auto whitespace-pre p-2 font-mono text-xs leading-7 text-foreground">
+                            {serializedResult}
+                          </pre>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </>

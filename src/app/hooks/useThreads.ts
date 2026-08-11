@@ -77,15 +77,21 @@ export function useThreads(props: {
           assistantId
         );
 
+      // 按 metadata 过滤，只显示主智能体会话，隐藏子智能体（如 nl2sql_agent）线程。
+      // LangGraph 运行时在每个 thread 的 metadata 中写入：
+      //   graph_id（本地/部署均有）→ 主会话为 chat_agent、子智能体为 nl2sql_agent
+      //   assistant_id（部署为 UUID）→ 主会话为当前 assistantId
+      // 本地 assistantId 是 graph 名 → 用 graph_id 过滤；
+      // 部署 assistantId 是 UUID → 用 assistant_id 过滤。
       const threads = await client.threads.search({
         limit: pageSize,
         offset: pageIndex * pageSize,
         sortBy: "updated_at" as const,
         sortOrder: "desc" as const,
         status,
-        // Only filter by assistant_id metadata for deployed graphs (UUIDs)
-        // Local dev graphs don't set this metadata
-        ...(isUUID ? { metadata: { assistant_id: assistantId } } : {}),
+        ...(isUUID
+          ? { metadata: { assistant_id: assistantId } }
+          : { metadata: { graph_id: assistantId } }),
       });
 
       return threads.map((thread): ThreadItem => {

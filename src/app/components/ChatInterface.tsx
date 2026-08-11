@@ -19,6 +19,8 @@ import {
   Circle,
   FileIcon,
   Plus,
+  MessageSquare,
+  Settings,
 } from "lucide-react";
 import { ChatMessage } from "@/app/components/ChatMessage";
 import type {
@@ -29,9 +31,16 @@ import type {
 } from "@/app/types/types";
 import { Assistant, Message } from "@langchain/langgraph-sdk";
 import { extractStringFromMessageContent } from "@/app/utils/utils";
+import {
+  extractInteractiveChartIframes,
+  chartToolNames,
+} from "@/app/utils/chart";
 import { useChatContext } from "@/providers/ChatProvider";
 import { cn } from "@/lib/utils";
 import { useStickToBottom } from "use-stick-to-bottom";
+import { toast } from "sonner";
+import { getQueryKeywords } from "@/lib/config";
+import { KeywordSettingsDialog } from "@/app/components/KeywordSettingsDialog";
 import { FilesPopover } from "@/app/components/TasksFilesSidebar";
 import { useFileUpload } from "@/app/hooks/useFileUpload";
 import { ContentBlocksPreview } from "@/app/components/ContentBlocksPreview";
@@ -59,6 +68,13 @@ const getStatusIcon = (status: TodoItem["status"], className?: string) => {
           className={cn("text-warning/80", className)}
         />
       );
+    case "query" as any:
+      return (
+        <MessageSquare
+          size={16}
+          className={cn("text-blue-500/80", className)}
+        />
+      );
     default:
       return (
         <Circle
@@ -70,8 +86,139 @@ const getStatusIcon = (status: TodoItem["status"], className?: string) => {
 };
 // eslint-disable  Mi80OmFIVnBZMlhrdUp2bG43bmx2TG82VVVSdWNnPT06YjFiOWU4MzE=
 
+// 时间线节点：● 已完成 / ◉ 进行中（转圈）/ ○ 待处理
+const timelineNode = (status: TodoItem["status"]) => {
+  switch (status) {
+    case "completed":
+      return (
+        <span className="flex h-4 w-4 items-center justify-center text-[11px] leading-none text-success">
+          ●
+        </span>
+      );
+    case "in_progress":
+      return (
+        <span className="flex h-4 w-4 animate-spin items-center justify-center text-[13px] leading-none text-primary">
+          ◌
+        </span>
+      );
+    default:
+      return (
+        <span className="flex h-4 w-4 items-center justify-center text-[11px] leading-none text-tertiary/60">
+          ○
+        </span>
+      );
+  }
+};
+
+// 时间线单行：节点 + 竖线 + 内容 + 状态标记
+const timelineRow = (status: TodoItem["status"], content: string, isLast: boolean) => {
+  const statusLabel =
+    status === "completed" ? "完成" : status === "in_progress" ? "进行中" : "待处理";
+  return (
+    <div className="flex">
+      {/* 节点列 */}
+      <div className="flex w-5 shrink-0 flex-col items-center">
+        {timelineNode(status)}
+        {!isLast && <span className="mt-0.5 w-px flex-1 bg-border/60" />}
+      </div>
+      {/* 内容列 */}
+      <div className="flex min-w-0 flex-1 items-center gap-2 pb-1.5 pl-2">
+        <span
+          className={cn(
+            "truncate",
+            status === "in_progress" && "font-medium text-foreground"
+          )}
+        >
+          {content}
+        </span>
+        <span
+          className={cn(
+            "ml-auto shrink-0 text-[10px]",
+            status === "completed" && "text-success",
+            status === "in_progress" && "text-primary",
+            status !== "completed" && status !== "in_progress" && "text-tertiary/50"
+          )}
+        >
+          {statusLabel}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+// 时间线分组标题
+const timelineSectionLabel = (label: string) => (
+  <div className="flex items-center gap-2 py-1.5 text-xs font-medium text-muted-foreground">
+    <span className="h-px w-3 bg-border/70" />
+    <span>{label}</span>
+    <span className="h-px flex-1 bg-border/70" />
+  </div>
+);
+
+// 渲染运行中任务的时间线（查询阶段 → 结果阶段：图表 + 报告）
+const renderTimeline = (qt: {
+  steps: TodoItem[];
+  chartStep?: TodoItem | null;
+  reportStep?: TodoItem | null;
+}) => {
+  // 组装各阶段行（统一为 {status, content}，isLast 由整体长度决定）
+  const queryRows = qt.steps.map((s) => ({ status: s.status, content: s.content }));
+  const chartRow = qt.chartStep ? { status: qt.chartStep.status, content: qt.chartStep.content } : null;
+  const reportRow = qt.reportStep ? { status: qt.reportStep.status, content: qt.reportStep.content } : null;
+
+  const hasQuery = queryRows.length > 0;
+  const hasResult = Boolean(chartRow || reportRow);
+  if (!hasQuery && !hasResult) return null;
+
+  // 展平所有行，计算 isLast（竖线延伸到非最后一行）
+  const allRows: { status: TodoItem["status"]; content: string }[] = [];
+  if (hasQuery) allRows.push(...queryRows);
+  if (chartRow) allRows.push(chartRow);
+  if (reportRow) allRows.push(reportRow);
+
+  let idx = 0;
+  const rows: React.ReactNode[] = [];
+  if (hasQuery) {
+    rows.push(<React.Fragment key="label-query">{timelineSectionLabel("查询阶段")}</React.Fragment>);
+    for (let i = 0; i < queryRows.length; i++) {
+      rows.push(
+        <React.Fragment key={`query-${i}`}>
+          {timelineRow(queryRows[i].status, queryRows[i].content, idx === allRows.length - 1)}
+        </React.Fragment>
+      );
+      idx++;
+    }
+  }
+  if (hasResult) {
+    rows.push(<React.Fragment key="label-result">{timelineSectionLabel("结果阶段")}</React.Fragment>);
+    if (chartRow) {
+      rows.push(
+        <React.Fragment key="chart">
+          {timelineRow(chartRow.status, chartRow.content, idx === allRows.length - 1)}
+        </React.Fragment>
+      );
+      idx++;
+    }
+    if (reportRow) {
+      rows.push(
+        <React.Fragment key="report">
+          {timelineRow(reportRow.status, reportRow.content, idx === allRows.length - 1)}
+        </React.Fragment>
+      );
+      idx++;
+    }
+  }
+
+  return <div className="mt-2">{rows}</div>;
+};
+
 export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const [metaOpen, setMetaOpen] = useState<"tasks" | "files" | null>(null);
+  const [keywordSettingsOpen, setKeywordSettingsOpen] = useState(false);
+  // 已完成任务汇总行展开控制
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // 运行中任务折叠控制（默认展开，点击标题折叠成单行）
+  const [collapsedRunningIds, setCollapsedRunningIds] = useState<Set<string>>(new Set());
   // const [selectedDb, setSelectedDb] = useState<string>("aix_report");
   const tasksContainerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -92,7 +239,9 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const {
     stream,
     messages,
-    todos,
+    queryTasks,
+    runningQueryCount,
+    queryInProgress,
     files,
     ui,
     setFiles,
@@ -102,9 +251,21 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     sendMessage,
     stopStream,
     resumeInterrupt,
+    currentContinueTaskKeyRef,
   } = useChatContext();
 
-  const submitDisabled = isLoading || !assistant;
+  // 发送可用性：仅受"智能体未就绪"限制。
+  // 不再包含 isLoading —— 续跑 run 期间用户消息优先（sendMessage 会中断续跑）；
+  // 用户 run（委派/用户消息）期间由 handleSubmit 提示稍候，但输入/回车始终可用。
+  const submitDisabled = !assistant;
+
+  // 数据查询意图判断：命中查询关键词才视为"查询"，查询进行中才拦截；
+  // "你好"等闲聊消息不拦截，正常发送。
+  // 关键词来自前端配置（localStorage，可配置），与后端 LLM 判断用同一份。
+  const isQueryMessage = useCallback((text: string): boolean => {
+    const queryKeywords = getQueryKeywords();
+    return queryKeywords.some((kw) => text.includes(kw));
+  }, []);
 
   const handleSubmit = useCallback(
     (e?: FormEvent) => {
@@ -112,19 +273,47 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
         e.preventDefault();
       }
       const messageText = input.trim();
-      if (
-        (!messageText && contentBlocks.length === 0) ||
-        isLoading ||
-        submitDisabled
-      )
+      if ((!messageText && contentBlocks.length === 0) || submitDisabled)
         return;
+      // 并发多查询：放开并发，仅做提示/上限保护。
+      // 1) 主线程有非续跑 run 在跑（委派 run / 用户上一条消息 run）→ 提示稍候，
+      //    等它空闲后再继续。续跑 run 期间（currentContinueTaskKeyRef 非空）则放行：
+      //    用户消息优先，由 sendMessage 中断续跑并即时发送。
+      // 2) 并发数达到硬上限（HARD_CAP=5）→ 阻止。
+      // 3) 已有查询进行中且是查询 → 放行 + 软提示。
+      if (isLoading && !currentContinueTaskKeyRef.current) {
+        toast("主智能体正在处理，请稍候", {
+          description: "主智能体正在执行任务，请等它空闲后再继续。",
+          duration: 2500,
+        });
+        return;
+      }
+      const isQuery = isQueryMessage(messageText);
+      const HARD_CAP = 5;
+      if (runningQueryCount >= HARD_CAP && isQuery) {
+        toast("并发查询已达上限", {
+          description: `当前已有 ${runningQueryCount} 个查询进行中，请等待部分完成后再发起。`,
+          duration: 3000,
+        });
+        return;
+      }
+      if (queryInProgress && isQuery) {
+        toast("已加入并发查询", {
+          description: `已同时处理 ${runningQueryCount + 1} 个查询；超出并发上限的任务完成后将自动排队继续。`,
+          duration: 2500,
+        });
+      }
       // const configurable = { db_name: selectedDb };
       // console.log("[DB_SELECT] db_name:", selectedDb);
       sendMessage(messageText, contentBlocks);
       setInput("");
       resetBlocks();
     },
-    [input, contentBlocks, isLoading, sendMessage, submitDisabled]
+    [
+      input, contentBlocks, isLoading, sendMessage, submitDisabled,
+      runningQueryCount, queryInProgress, isQueryMessage,
+      currentContinueTaskKeyRef,
+    ]
   );
 
   const handleKeyDown = useCallback(
@@ -267,22 +456,56 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     });
 
     const processedArray = Array.from(messageMap.values());
-    return processedArray.map((data, index) => {
+    const withShowAvatar = processedArray.map((data, index) => {
       const prevMessage = index > 0 ? processedArray[index - 1].message : null;
       return {
         ...data,
         showAvatar: data.message.type !== prevMessage?.type,
       };
     });
+
+    // ── 附随图表：最新生成的 echarts 交互 iframe 附到下一个「有正文且无工具调用」的
+    // AI 消息（报告呈现消息）上方。生成步骤消息（含图表工具调用）本身已在正文/工具卡
+    // 渲染图表；报告消息只有文字，把同轮最新图表附随过去，让报告也呈现交互图表。 ──
+    let pendingChart: string | null = null;
+    for (const d of withShowAvatar) {
+      const msgText = extractStringFromMessageContent(d.message) || "";
+      const html = extractInteractiveChartIframes(msgText).join("");
+      if (html) {
+        pendingChart = html;
+      } else {
+        const fromTools = (d.toolCalls || [])
+          .filter(
+            (tc: ToolCall) =>
+              chartToolNames.some((n) => (tc.name || "").includes(n)) &&
+              typeof tc.result === "string"
+          )
+          .map((tc: ToolCall) =>
+            extractInteractiveChartIframes(tc.result as string).join("")
+          )
+          .join("");
+        if (fromTools) pendingChart = fromTools;
+      }
+      if (
+        pendingChart &&
+        d.message.type === "ai" &&
+        !(d.toolCalls && d.toolCalls.length > 0) &&
+        msgText.trim()
+      ) {
+        (d as any).chartAttachmentHtml = pendingChart;
+        pendingChart = null;
+      }
+    }
+
+    return withShowAvatar as Array<{
+      message: Message;
+      toolCalls: ToolCall[];
+      showAvatar: boolean;
+      chartAttachmentHtml?: string;
+    }>;
   }, [messages, interrupt]);
 
-  const groupedTodos = {
-    in_progress: todos.filter((t) => t.status === "in_progress"),
-    pending: todos.filter((t) => t.status === "pending"),
-    completed: todos.filter((t) => t.status === "completed"),
-  };
-
-  const hasTasks = todos.length > 0;
+  // 主智能体自身的顺序步骤（查询进度由 queryTasks 独立展示，不再注入）
   const hasFiles = Object.keys(files).length > 0;
 
   // Parse out any action requests or review configs from the interrupt
@@ -334,9 +557,18 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             </div>
           ) : (
             <>
-              {processedMessages.map((data, index) => {
+              {processedMessages
+              .filter((data) => {
+                // 隐藏前端自动发送的子智能体继续消息
+                const content =
+                  typeof data.message.content === "string"
+                    ? data.message.content
+                    : "";
+                return !content.startsWith("子智能体查询已完成，请继续执行后续步骤");
+              })
+              .map((data, index, filteredArr) => {
                 const messageUi = messageUiMap.get(data.message.id ?? "");
-                const isLastMessage = index === processedMessages.length - 1;
+                const isLastMessage = index === filteredArr.length - 1;
                 return (
                   <ChatMessage
                     key={data.message.id}
@@ -356,6 +588,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                       isLastMessage ? resumeInterrupt : undefined
                     }
                     graphId={isLastMessage ? assistant?.graph_id : undefined}
+                    chartAttachmentHtml={data.chartAttachmentHtml}
                   />
                 );
               })}
@@ -373,91 +606,103 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             dragOver && "border-primary border-2 border-dotted"
           )}
         >
-          {(hasTasks || hasFiles) && (
+          {(hasFiles || queryTasks.length > 0) && (
             <div className="flex max-h-72 flex-col overflow-y-auto border-b border-border bg-sidebar empty:hidden">
               {!metaOpen && (
                 <>
-                  {(() => {
-                    const activeTask = todos.find(
-                      (t) => t.status === "in_progress"
-                    );
+                  {/* 并发多查询进度（4 层分组：running 完整 / 最近完成单行 / 历史汇总） */}
+                  {queryTasks.length > 0 && (() => {
+                    // 分组：running 任务 + 已完成任务（汇总一行，点击展开）
+                    const runningTasks = queryTasks.filter((t) => t.status === "running");
+                    const doneTasks = queryTasks.filter((t) => t.status !== "running");
 
-                    const totalTasks = todos.length;
-                    const remainingTasks =
-                      totalTasks - groupedTodos.pending.length;
-                    const isCompleted = totalTasks === remainingTasks;
+                    // 计算任务进度比例（查询 + 图表 + 报告 三段一起算）
+                    const progressOf = (qt: any) => {
+                      const all = [
+                        ...(qt.steps || []),
+                        ...(qt.chartStep ? [qt.chartStep] : []),
+                        ...(qt.reportStep ? [qt.reportStep] : []),
+                      ];
+                      if (all.length === 0) return 0;
+                      const done = all.filter((s: any) => s.status === "completed").length;
+                      return Math.round((done / all.length) * 100);
+                    };
 
-                    const tasksTrigger = (() => {
-                      if (!hasTasks) return null;
-                      return (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setMetaOpen((prev) =>
-                              prev === "tasks" ? null : "tasks"
-                            )
-                          }
-                          className="grid w-full cursor-pointer grid-cols-[auto_auto_1fr] items-center gap-3 px-[18px] py-3 text-left"
-                          aria-expanded={metaOpen === "tasks"}
-                        >
-                          {(() => {
-                            if (isCompleted) {
-                              return [
-                                <CheckCircle
-                                  key="icon"
-                                  size={16}
-                                  className="text-success/80"
-                                />,
-                                <span
-                                  key="label"
-                                  className="ml-[1px] min-w-0 truncate text-sm"
-                                >
-                                  所有任务已完成
-                                </span>,
-                              ];
-                            }
-
-                            if (activeTask != null) {
-                              return [
-                                <div key="icon">
-                                  {getStatusIcon(activeTask.status)}
-                                </div>,
-                                <span
-                                  key="label"
-                                  className="ml-[1px] min-w-0 truncate text-sm"
-                                >
-                                  任务{" "}
-                                  {totalTasks - groupedTodos.pending.length} / {" "}
-                                  {totalTasks}
-                                </span>,
-                                <span
-                                  key="content"
-                                  className="min-w-0 gap-2 truncate text-sm text-muted-foreground"
-                                >
-                                  {activeTask.content}
-                                </span>,
-                              ];
-                            }
-
-                            return [
-                              <Circle
-                                key="icon"
-                                size={16}
-                                className="text-tertiary/70"
-                              />,
-                              <span
-                                key="label"
-                                className="ml-[1px] min-w-0 truncate text-sm"
+                    return (
+                      <div className="flex flex-col divide-y divide-border">
+                        {/* 1. running 任务：完整卡片 */}
+                        {runningTasks.map((qt) => {
+                          const pct = progressOf(qt);
+                          const collapsed = collapsedRunningIds.has(qt.task_id);
+                          const allSteps = [
+                            ...(qt.steps || []),
+                            ...(qt.chartStep ? [qt.chartStep] : []),
+                            ...(qt.reportStep ? [qt.reportStep] : []),
+                          ];
+                          const doneCount = allSteps.filter((s: any) => s.status === "completed").length;
+                          return (
+                            <div key={qt.task_id} className="px-[18px] py-2.5">
+                              <button
+                                type="button"
+                                className="flex w-full cursor-pointer items-center gap-2 text-sm"
+                                onClick={() => {
+                                  setCollapsedRunningIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(qt.task_id)) next.delete(qt.task_id);
+                                    else next.add(qt.task_id);
+                                    return next;
+                                  });
+                                }}
                               >
-                                任务 {totalTasks - groupedTodos.pending.length}{" "}
-                                / {totalTasks}
-                              </span>,
-                            ];
-                          })()}
-                        </button>
-                      );
-                    })();
+                                <Clock size={14} className="text-primary shrink-0" />
+                                <span className="truncate font-medium text-foreground">{qt.title}</span>
+                                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                                  进行中 {allSteps.length > 0 ? `${doneCount}/${allSteps.length}` : ""} {collapsed ? "▸" : "▾"}
+                                </span>
+                              </button>
+                              {/* 折叠时仅显示进度条（紧凑），展开时显示时间线（查询/图表/报告阶段） */}
+                              {!collapsed && (
+                                <>
+                                  {qt.steps.length > 0 && (
+                                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted/50">
+                                      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                                    </div>
+                                  )}
+                                  {renderTimeline(qt)}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
 
+                        {/* 2. 已完成任务：汇总一行，点击展开全部列表（计数与内容一致） */}
+                        {doneTasks.length > 0 && (
+                          <div className="px-[18px] py-2">
+                            <button
+                              type="button"
+                              className="flex w-full cursor-pointer items-center gap-2 text-sm"
+                              onClick={() => setHistoryOpen((v) => !v)}
+                            >
+                              <CheckCircle size={14} className="text-success/80 shrink-0" />
+                              <span className="font-medium text-foreground">✅ 已完成 {doneTasks.length} 个查询</span>
+                              <span className="ml-auto shrink-0 text-xs text-muted-foreground">{historyOpen ? "▾" : "▸"}</span>
+                            </button>
+                            {historyOpen && (
+                              <div className="mt-1.5 flex flex-col">
+                                {doneTasks.map((qt) => (
+                                  <div key={qt.task_id} className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+                                    <span className="w-3 shrink-0 text-center">✓</span>
+                                    <span className="truncate">{qt.title}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {(() => {
                     const filesTrigger = (() => {
                       if (!hasFiles) return null;
                       return (
@@ -481,8 +726,9 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                     })();
 
                     return (
-                      <div className="grid grid-cols-[1fr_auto_auto] items-center">
-                        {tasksTrigger}
+                      <div className="flex items-center justify-between">
+                        {/* 主 todos 的"任务 X/Y"触发器已移除——每个查询的委派/图表/报告
+                            进度由上方并发查询卡片展示，避免与旧 write_todos 混乱列表重复。 */}
                         {filesTrigger}
                       </div>
                     );
@@ -493,20 +739,6 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
               {metaOpen && (
                 <>
                   <div className="sticky top-0 flex items-stretch bg-sidebar text-sm">
-                    {hasTasks && (
-                      <button
-                        type="button"
-                        className="py-3 pr-4 first:pl-[18px] aria-expanded:font-semibold"
-                        onClick={() =>
-                          setMetaOpen((prev) =>
-                            prev === "tasks" ? null : "tasks"
-                          )
-                        }
-                        aria-expanded={metaOpen === "tasks"}
-                      >
-                        任务
-                      </button>
-                    )}
                     {hasFiles && (
                       <button
                         type="button"
@@ -535,34 +767,16 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                     className="px-[18px]"
                   >
                     {metaOpen === "tasks" &&
-                      Object.entries(groupedTodos)
-                        .filter(([_, todos]) => todos.length > 0)
-                        .map(([status, todos]) => (
-                          <div
-                            key={status}
-                            className="mb-4"
-                          >
-                            <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-tertiary">
-                              {
-                                {
-                                  pending: "待处理",
-                                  in_progress: "进行中",
-                                  completed: "已完成",
-                                }[status]
-                              }
-                            </h3>
-                            <div className="grid grid-cols-[auto_1fr] gap-3 rounded-sm p-1 pl-0 text-sm">
-                              {todos.map((todo, index) => (
-                                <Fragment key={`${status}_${todo.id}_${index}`}>
-                                  {getStatusIcon(todo.status, "mt-0.5")}
-                                  <span className="break-words text-inherit">
-                                    {todo.content}
-                                  </span>
-                                </Fragment>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
+                      // 主 todos 面板已隐藏——每个查询的委派/图表/报告进度
+                      // 由顶部并发查询卡片（queryTasks）完整展示，避免与旧 write_todos
+                      // 整体替换导致的混乱列表重复显示。
+                      (queryTasks.length === 0 ? (
+                        <div className="py-3 text-sm text-muted-foreground">暂无任务</div>
+                      ) : (
+                        <div className="py-3 text-sm text-muted-foreground">
+                          查询进度见上方卡片（每个查询含委派、子步骤、图表、报告）
+                        </div>
+                      ))}
 
                     {metaOpen === "files" && (
                       <div className="mb-6">
@@ -616,6 +830,15 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                   accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
                   className="hidden"
                 />
+                <button
+                  type="button"
+                  onClick={() => setKeywordSettingsOpen(true)}
+                  className="flex cursor-pointer items-center gap-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:text-primary"
+                  title="查询关键词设置"
+                  aria-label="查询关键词设置"
+                >
+                  <Settings className="size-4" />
+                </button>
               </div>
               <div className="flex justify-end gap-2">
                 <Button
@@ -645,6 +868,10 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           </form>
         </div>
       </div>
+      <KeywordSettingsDialog
+        open={keywordSettingsOpen}
+        onOpenChange={setKeywordSettingsOpen}
+      />
     </div>
   );
 });

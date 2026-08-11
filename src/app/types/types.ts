@@ -23,8 +23,23 @@ export interface FileItem {
 export interface TodoItem {
   id: string;
   content: string;
-  status: "pending" | "in_progress" | "completed";
+  status: "pending" | "in_progress" | "completed" | "query";
   updatedAt?: Date;
+}
+
+/**
+ * 并发查询任务（对应后端 async_tasks 中一个 task_id）。
+ * 由 useChat 从 async_tasks × query_headers × subagent_steps_map 派生。
+ */
+export interface QueryTask {
+  task_id: string;
+  agent_name?: string;
+  title: string; // 查询标题（去 📋 前缀）
+  status: "running" | "success" | "error" | "cancelled" | "pending";
+  created_at: string; // 用于最新置顶排序
+  steps: TodoItem[]; // 该任务的子智能体步骤（查询阶段）
+  chartStep?: TodoItem | null;   // 图表阶段（从主 todos content 匹配）
+  reportStep?: TodoItem | null;  // 报告阶段（从主 todos content 匹配）
 }
 // TODO  MC8yOmFIVnBZMlhrdUp2bG43bmx2TG82WjJKSk1BPT06Y2M0MTg4M2Y=
 

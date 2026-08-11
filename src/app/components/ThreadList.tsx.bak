@@ -10,7 +10,7 @@ import {
   useCallback,
 } from "react";
 import { format } from "date-fns";
-import { Loader2, MessageSquare, X, Trash2, Square, CheckSquare } from "lucide-react";
+import { Loader2, MessageSquare, X, Trash2 } from "lucide-react";
 import { useQueryState } from "nuqs";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -138,8 +138,6 @@ export function ThreadList({
   const [currentThreadId, setCurrentThreadId] = useQueryState("threadId");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
-  const [batchMode, setBatchMode] = useState(false);
-  const [selectedThreads, setSelectedThreads] = useState<Set<string>>(new Set());
   const client = useClient();
 
   const threads = useThreads({
@@ -216,9 +214,6 @@ export function ThreadList({
     };
   }, []);
 
-  
-
-
   const mutateFn = useCallback(() => {
     if (typeof window === "undefined") {
       startTransition(() => {
@@ -238,41 +233,6 @@ export function ThreadList({
       mutateTimerRef.current = null;
     }, 80);
   }, []);
-const toggleThread = useCallback((threadId: string) => {
-    setSelectedThreads(prev => {
-      const next = new Set(prev);
-      if (next.has(threadId)) next.delete(threadId); else next.add(threadId);
-      return next;
-    });
-  }, []);
-
-  const toggleSelectAll = useCallback(() => {
-    const allIds = flattened.map(t => t.id);
-    setSelectedThreads(prev => {
-      const allSelected = allIds.length > 0 && allIds.every(id => prev.has(id));
-      return allSelected ? new Set() : new Set(allIds);
-    });
-  }, [threads.data]);
-
-  const handleBatchDelete = useCallback(async () => {
-    if (selectedThreads.size === 0) return;
-    if (!confirm(`确定要删除选中的 ${selectedThreads.size} 条对话吗？`)) return;
-    if (currentThreadId && selectedThreads.has(currentThreadId)) setCurrentThreadId(null);
-    try {
-      const results = await Promise.allSettled(
-        Array.from(selectedThreads).map(id => client.threads.delete(id))
-      );
-      const failed = results.filter(r => r.status === 'rejected').length;
-      mutateFn();
-      setSelectedThreads(new Set());
-      setBatchMode(false);
-      if (failed > 0) alert(`${failed} 条删除失败，其余已删除`);
-    } catch (e) {
-      console.error("Batch delete failed:", e);
-      alert("批量删除失败");
-    }
-  }, [selectedThreads, client, currentThreadId, setCurrentThreadId, mutateFn]);
-
 
   useEffect(() => {
     onMutateReadyRef.current?.(mutateFn);
@@ -289,12 +249,12 @@ const toggleThread = useCallback((threadId: string) => {
       }
 
       setDeletingThreadId(threadId);
-      // 先断开当前流
-      if (currentThreadId === threadId) {
-        setCurrentThreadId(null);
-      }
       try {
         await client.threads.delete(threadId);
+
+        if (currentThreadId === threadId) {
+          setCurrentThreadId(null);
+        }
 
         mutateFn();
       } catch (error) {
@@ -376,23 +336,6 @@ const toggleThread = useCallback((threadId: string) => {
         </div>
       </div>
 
-      {/* Batch toolbar */}
-      <div className="flex flex-shrink-0 items-center gap-2 px-3 py-2 border-b">
-        {batchMode ? (
-          <>
-            <Button variant="ghost" size="sm" onClick={toggleSelectAll}>
-              {flattened.length > 0 && selectedThreads.size === flattened.length ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
-              <span className="ml-1 text-xs">全选</span>
-            </Button>
-            <span className="text-xs text-muted-foreground">{selectedThreads.size}/{flattened.length}</span>
-            <div className="flex-1" />
-            <Button variant="destructive" size="sm" onClick={handleBatchDelete} disabled={selectedThreads.size === 0}>删除选中</Button>
-            <Button variant="ghost" size="sm" onClick={() => { setBatchMode(false); setSelectedThreads(new Set()); }}>取消</Button>
-          </>
-        ) : (
-          <Button variant="outline" size="sm" className="text-blue-600 border-blue-300" onClick={() => setBatchMode(true)}>🗑 批量管理</Button>
-        )}
-      </div>
       <ScrollArea className="h-0 flex-1">
         {threads.error && <ErrorState message={threads.error.message} />}
 
@@ -422,25 +365,12 @@ const toggleThread = useCallback((threadId: string) => {
                     {groupThreads.map((thread) => (
                       <div
                         key={thread.id}
-                        className="group relative flex items-start gap-1"
+                        className="group relative"
                       >
-                        {batchMode && (
-                          <button
-                            type="button"
-                            onClick={() => toggleThread(thread.id)}
-                            className="mt-2 ml-1 flex-shrink-0"
-                          >
-                            {selectedThreads.has(thread.id) ? (
-                              <CheckSquare className="h-4 w-4 text-blue-500" />
-                            ) : (
-                              <Square className="h-4 w-4 text-muted-foreground" />
-                            )}
-                          </button>
-                        )}
                         {/* Delete button - positioned at description line, outside the text */}
                         <button
                           type="button"
-                          onClick={(e) => { if (batchMode) return; handleDeleteThread(thread.id, e); }}
+                          onClick={(e) => handleDeleteThread(thread.id, e)}
                           disabled={deletingThreadId === thread.id}
                           className={cn(
                             "absolute left-0 bottom-3 z-10 flex-shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive hover:text-destructive-foreground group-hover:opacity-100",
