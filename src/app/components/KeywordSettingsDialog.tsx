@@ -68,8 +68,9 @@ export function KeywordSettingsDialog({
         <DialogHeader>
           <DialogTitle>查询关键词设置</DialogTitle>
           <DialogDescription>
-            命中关键词的消息会被视为数据查询。查询进行中再次输入查询会被拦截提示。
-            用逗号分隔多个关键词，留空则使用默认关键词。
+            命中关键词的消息会被识别为数据查询，自动委派给 NL2SQL 子智能体查询。
+            未命中关键词的消息走普通对话，不会触发数据查询。
+            查询进行中再次输入同类查询会被拦截提示。用逗号分隔多个关键词，留空则使用默认关键词。
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">

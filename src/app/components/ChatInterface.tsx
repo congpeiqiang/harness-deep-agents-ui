@@ -44,7 +44,8 @@ import { KeywordSettingsDialog } from "@/app/components/KeywordSettingsDialog";
 import { FilesPopover } from "@/app/components/TasksFilesSidebar";
 import { useFileUpload } from "@/app/hooks/useFileUpload";
 import { ContentBlocksPreview } from "@/app/components/ContentBlocksPreview";
-// import { DatabaseSelector } from "@/app/components/DatabaseSelector";
+import { DatabaseSelector } from "@/app/components/DatabaseSelector";
+import { DbConfigDialog } from "@/app/components/DbConfigDialog";
 import { Label } from "@/components/ui/label";
 
 interface ChatInterfaceProps {
@@ -219,7 +220,15 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const [historyOpen, setHistoryOpen] = useState(false);
   // 运行中任务折叠控制（默认展开，点击标题折叠成单行）
   const [collapsedRunningIds, setCollapsedRunningIds] = useState<Set<string>>(new Set());
-  // const [selectedDb, setSelectedDb] = useState<string>("aix_report");
+  // 选库：持久化到 localStorage，会话间保持
+  const [selectedDb, setSelectedDb] = useState<string>(() => {
+    try {
+      return localStorage.getItem("selectedDb") || "aix_report";
+    } catch {
+      return "aix_report";
+    }
+  });
+  const [dbConfigOpen, setDbConfigOpen] = useState(false);
   const tasksContainerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -303,16 +312,16 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           duration: 2500,
         });
       }
-      // const configurable = { db_name: selectedDb };
-      // console.log("[DB_SELECT] db_name:", selectedDb);
-      sendMessage(messageText, contentBlocks);
+      // 随消息传入 db_name（configurable → 后端主 agent → 透传子 agent run_sql）
+      const configurable = { db_name: selectedDb };
+      sendMessage(messageText, contentBlocks, configurable);
       setInput("");
       resetBlocks();
     },
     [
       input, contentBlocks, isLoading, sendMessage, submitDisabled,
       runningQueryCount, queryInProgress, isQueryMessage,
-      currentContinueTaskKeyRef,
+      currentContinueTaskKeyRef, selectedDb,
     ]
   );
 
@@ -820,7 +829,18 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                 >
                   <Plus className="size-5" />
                   <span className="text-sm">上传 PDF 或图片</span>
-                {/* <DatabaseSelector value={selectedDb} onChange={setSelectedDb} /> */}
+                <DatabaseSelector
+                  value={selectedDb}
+                  onChange={(v) => {
+                    setSelectedDb(v);
+                    try {
+                      localStorage.setItem("selectedDb", v);
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                  onManage={() => setDbConfigOpen(true)}
+                />
                 </Label>
                 <input
                   id="file-input"
@@ -871,6 +891,10 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
       <KeywordSettingsDialog
         open={keywordSettingsOpen}
         onOpenChange={setKeywordSettingsOpen}
+      />
+      <DbConfigDialog
+        open={dbConfigOpen}
+        onOpenChange={setDbConfigOpen}
       />
     </div>
   );
