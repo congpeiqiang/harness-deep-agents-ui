@@ -391,7 +391,42 @@ function StreamingMarkdownContent({ content }: { content: string }) {
     return rows;
   }, [lines]);
 
-  return <div className="space-y-3">{renderedRows}</div>;
+  // 流式光标：追加到最后一段文本行尾（inline 闪烁 ▍），让用户感知"正在生成"。
+  // 本组件只在 streaming=true 时被渲染（MarkdownContent.tsx:509-515），光标可无条件显示。
+  // 找不到最后一段 <p>（内容以代码块/表格/空行收尾）时回退为尾部独立光标块。
+  let cursorInjected = false;
+  const rowsWithCursor = renderedRows.slice();
+  for (let i = rowsWithCursor.length - 1; i >= 0; i--) {
+    const r = rowsWithCursor[i];
+    if (React.isValidElement<{ children?: React.ReactNode }>(r) && r.type === "p") {
+      rowsWithCursor[i] = React.cloneElement(r, {
+        children: [
+          r.props.children,
+          <span
+            key="streaming-cursor"
+            className="animate-pulse pl-0.5 text-primary"
+            aria-hidden="true"
+          >
+            ▍
+          </span>,
+        ],
+      });
+      cursorInjected = true;
+      break;
+    }
+  }
+  if (!cursorInjected) {
+    rowsWithCursor.push(
+      <span
+        key="streaming-cursor"
+        className="animate-pulse text-primary"
+        aria-hidden="true"
+      >
+        ▍
+      </span>
+    );
+  }
+  return <div className="space-y-3">{rowsWithCursor}</div>;
 }
 // FIXME  Mi80OmFIVnBZMlhrdUp2bG43bmx2TG82YVU1c05nPT06ZTBlMDFhNWI=
 
