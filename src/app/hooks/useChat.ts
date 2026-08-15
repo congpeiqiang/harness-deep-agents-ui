@@ -15,7 +15,7 @@ import type { TodoItem, QueryTask } from "@/app/types/types";
 import { useClient } from "@/providers/ClientProvider";
 import { useQueryState } from "nuqs";
 import { ContentBlock } from "@langchain/core/messages";
-import { getQueryKeywords, getConfig } from "@/lib/config";
+import { getQueryKeywords, getConfig, getEnableThinking } from "@/lib/config";
 // FIXME  MS80OmFIVnBZMlhrdUp2bG43bmx2TG82YlU1amRRPT06N2RjMGNjZmI=
 
 // ── 从子线程消息推导查询步骤（write_todos 未调用时的兜底）──
@@ -692,6 +692,8 @@ export function useChat({
               // 查询关键词随 context 传给后端，注入 LLM 系统提示词，
               // 使 LLM 委派判断与前端拦截判断使用同一份关键词
               query_keywords: getQueryKeywords(),
+              // 开启思考：后端 ThinkingToggleMiddleware 按此值每次模型调用重建模型
+              enable_thinking: String(getEnableThinking()),
             },
             recursion_limit: 500,
           },

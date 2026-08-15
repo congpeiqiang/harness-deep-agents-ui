@@ -3,6 +3,7 @@ export interface StandaloneConfig {
   assistantId: string;
   langsmithApiKey?: string;
   queryKeywords?: string[]; // 数据查询触发关键词（前后端共用，注入 LLM prompt 用）
+  enableThinking?: boolean; // 是否开启模型思考：开→后端真思考且前端显示；关→后端不思考且不显示（前后端共用）
 }
 // TODO  MC8yOmFIVnBZMlhrdUp2bG43bmx2TG82YjFwVU9BPT06YjNiYTlmNzE=
 
@@ -26,6 +27,16 @@ export function getQueryKeywords(): string[] {
     // ignore
   }
   return DEFAULT_QUERY_KEYWORDS;
+}
+
+// 是否开启模型思考，缺省默认开启（当前两个模型默认思考开，与后端一致）
+export function getEnableThinking(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return getConfig()?.enableThinking ?? true;
+  } catch {
+    return true;
+  }
 }
 
 export function getConfig(): StandaloneConfig | null {

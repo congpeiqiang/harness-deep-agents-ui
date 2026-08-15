@@ -5,6 +5,7 @@ import { SubAgentIndicator } from "@/app/components/SubAgentIndicator";
 import { ToolCallBox } from "@/app/components/ToolCallBox";
 import { MarkdownContent } from "@/app/components/MarkdownContent";
 import { MultimodalPreview } from "@/app/components/MultimodalPreview";
+import { ThinkingBlock } from "@/app/components/ThinkingBlock";
 import type {
   SubAgent,
   ToolCall,
@@ -231,6 +232,8 @@ export const ChatMessage = React.memo<ChatMessageProps>(
                   (html, i) => allIframes.indexOf(html) === i
                 );
                 const textContent = messageContent.replace(iframeRegex, '').trim();
+                // 思考阶段（reasoning_content）：有则显示（后端开了思考才流过来，关了自然没有）
+                const reasoning = (message.additional_kwargs as Record<string, unknown>)?.reasoning_content;
                 return (
                   <>
                     {chartAttachmentHtml && (
@@ -239,6 +242,13 @@ export const ChatMessage = React.memo<ChatMessageProps>(
                     {uniqueIframes.map((html, i) => (
                       <div key={i} className="my-4 w-full" dangerouslySetInnerHTML={{ __html: html }} />
                     ))}
+                    {typeof reasoning === "string" &&
+                      reasoning.trim() !== "" && (
+                        <ThinkingBlock
+                          content={reasoning}
+                          streaming={isStreamingMessage}
+                        />
+                      )}
                     {textContent && (
                       <div className={cn("relative flex items-end gap-0")}>
                         <div className="mt-4 overflow-hidden break-words text-sm font-normal leading-[150%] text-primary">
