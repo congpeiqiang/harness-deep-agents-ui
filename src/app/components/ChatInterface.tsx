@@ -15,12 +15,9 @@ import {
   Square,
   ArrowUp,
   CheckCircle,
-  Clock,
-  Circle,
   FileIcon,
   Plus,
-  MessageSquare,
-  Settings,
+  Loader2,
 } from "lucide-react";
 import { ChatMessage } from "@/app/components/ChatMessage";
 import type {
@@ -30,196 +27,50 @@ import type {
   ReviewConfig,
 } from "@/app/types/types";
 import { Assistant, Message } from "@langchain/langgraph-sdk";
-import { extractStringFromMessageContent } from "@/app/utils/utils";
 import {
-  extractInteractiveChartIframes,
-  chartToolNames,
-} from "@/app/utils/chart";
+  extractStringFromMessageContent,
+} from "@/app/utils/utils";
+import { extractInteractiveChartIframes, chartToolNames } from "@/app/utils/chart";
 import { useChatContext } from "@/providers/ChatProvider";
 import { cn } from "@/lib/utils";
+import { useQueryState } from "nuqs";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { toast } from "sonner";
-import { getQueryKeywords } from "@/lib/config";
-import { KeywordSettingsDialog } from "@/app/components/KeywordSettingsDialog";
+import { getQueryKeywords, getEnableThinking } from "@/lib/config";
+import { getActiveWorkspace } from "@/lib/workspace";
+import { listThreadFeedback, type FeedbackRecord } from "@/lib/feedback";
+import { forkThread } from "@/lib/threadFork";
+import { decideSqlApproval, type SqlApprovalDecision } from "@/lib/sqlApproval";
+import { cancelTask } from "@/lib/cancelTask";
+import { SqlApprovalCard, type SqlApprovalPayload } from "@/app/components/SqlApprovalCard";
+import { generateAutoTitle, setThreadTitle } from "@/lib/threadMeta";
+import { useClient } from "@/providers/ClientProvider";
 import { FilesPopover } from "@/app/components/TasksFilesSidebar";
 import { useFileUpload } from "@/app/hooks/useFileUpload";
 import { ContentBlocksPreview } from "@/app/components/ContentBlocksPreview";
 import { DatabaseSelector } from "@/app/components/DatabaseSelector";
-import { DbConfigDialog } from "@/app/components/DbConfigDialog";
+import { WorkspaceSelector } from "@/app/components/WorkspaceSelector";
+import { ModelSelector } from "@/app/components/ModelSelector";
+import { listModelConfigs } from "@/lib/modelConfigs";
 import { Label } from "@/components/ui/label";
+import { WeintLogo } from "@/app/components/WeintLogo";
+import { StatsLine } from "@/app/components/StatsLine";
+import { ContextRing } from "@/app/components/ContextRing";
+import { SubAgentProgressCard } from "@/app/components/SubAgentProgressCard";
 
 interface ChatInterfaceProps {
   assistant: Assistant | null;
 }
 // eslint-disable  MS80OmFIVnBZMlhrdUp2bG43bmx2TG82VVVSdWNnPT06YjFiOWU4MzE=
 
-const getStatusIcon = (status: TodoItem["status"], className?: string) => {
-  switch (status) {
-    case "completed":
-      return (
-        <CheckCircle
-          size={16}
-          className={cn("text-success/80", className)}
-        />
-      );
-    case "in_progress":
-      return (
-        <Clock
-          size={16}
-          className={cn("text-warning/80", className)}
-        />
-      );
-    case "query" as any:
-      return (
-        <MessageSquare
-          size={16}
-          className={cn("text-blue-500/80", className)}
-        />
-      );
-    default:
-      return (
-        <Circle
-          size={16}
-          className={cn("text-tertiary/70", className)}
-        />
-      );
-  }
-};
-// eslint-disable  Mi80OmFIVnBZMlhrdUp2bG43bmx2TG82VVVSdWNnPT06YjFiOWU4MzE=
-
-// 时间线节点：● 已完成 / ◉ 进行中（转圈）/ ○ 待处理
-const timelineNode = (status: TodoItem["status"]) => {
-  switch (status) {
-    case "completed":
-      return (
-        <span className="flex h-4 w-4 items-center justify-center text-[11px] leading-none text-success">
-          ●
-        </span>
-      );
-    case "in_progress":
-      return (
-        <span className="flex h-4 w-4 animate-spin items-center justify-center text-[13px] leading-none text-primary">
-          ◌
-        </span>
-      );
-    default:
-      return (
-        <span className="flex h-4 w-4 items-center justify-center text-[11px] leading-none text-tertiary/60">
-          ○
-        </span>
-      );
-  }
-};
-
-// 时间线单行：节点 + 竖线 + 内容 + 状态标记
-const timelineRow = (status: TodoItem["status"], content: string, isLast: boolean) => {
-  const statusLabel =
-    status === "completed" ? "完成" : status === "in_progress" ? "进行中" : "待处理";
-  return (
-    <div className="flex">
-      {/* 节点列 */}
-      <div className="flex w-5 shrink-0 flex-col items-center">
-        {timelineNode(status)}
-        {!isLast && <span className="mt-0.5 w-px flex-1 bg-border/60" />}
-      </div>
-      {/* 内容列 */}
-      <div className="flex min-w-0 flex-1 items-center gap-2 pb-1.5 pl-2">
-        <span
-          className={cn(
-            "truncate",
-            status === "in_progress" && "font-medium text-foreground"
-          )}
-        >
-          {content}
-        </span>
-        <span
-          className={cn(
-            "ml-auto shrink-0 text-[10px]",
-            status === "completed" && "text-success",
-            status === "in_progress" && "text-primary",
-            status !== "completed" && status !== "in_progress" && "text-tertiary/50"
-          )}
-        >
-          {statusLabel}
-        </span>
-      </div>
-    </div>
-  );
-};
-
-// 时间线分组标题
-const timelineSectionLabel = (label: string) => (
-  <div className="flex items-center gap-2 py-1.5 text-xs font-medium text-muted-foreground">
-    <span className="h-px w-3 bg-border/70" />
-    <span>{label}</span>
-    <span className="h-px flex-1 bg-border/70" />
-  </div>
-);
-
-// 渲染运行中任务的时间线（查询阶段 → 结果阶段：图表 + 报告）
-const renderTimeline = (qt: {
-  steps: TodoItem[];
-  chartStep?: TodoItem | null;
-  reportStep?: TodoItem | null;
-}) => {
-  // 组装各阶段行（统一为 {status, content}，isLast 由整体长度决定）
-  const queryRows = qt.steps.map((s) => ({ status: s.status, content: s.content }));
-  const chartRow = qt.chartStep ? { status: qt.chartStep.status, content: qt.chartStep.content } : null;
-  const reportRow = qt.reportStep ? { status: qt.reportStep.status, content: qt.reportStep.content } : null;
-
-  const hasQuery = queryRows.length > 0;
-  const hasResult = Boolean(chartRow || reportRow);
-  if (!hasQuery && !hasResult) return null;
-
-  // 展平所有行，计算 isLast（竖线延伸到非最后一行）
-  const allRows: { status: TodoItem["status"]; content: string }[] = [];
-  if (hasQuery) allRows.push(...queryRows);
-  if (chartRow) allRows.push(chartRow);
-  if (reportRow) allRows.push(reportRow);
-
-  let idx = 0;
-  const rows: React.ReactNode[] = [];
-  if (hasQuery) {
-    rows.push(<React.Fragment key="label-query">{timelineSectionLabel("查询阶段")}</React.Fragment>);
-    for (let i = 0; i < queryRows.length; i++) {
-      rows.push(
-        <React.Fragment key={`query-${i}`}>
-          {timelineRow(queryRows[i].status, queryRows[i].content, idx === allRows.length - 1)}
-        </React.Fragment>
-      );
-      idx++;
-    }
-  }
-  if (hasResult) {
-    rows.push(<React.Fragment key="label-result">{timelineSectionLabel("结果阶段")}</React.Fragment>);
-    if (chartRow) {
-      rows.push(
-        <React.Fragment key="chart">
-          {timelineRow(chartRow.status, chartRow.content, idx === allRows.length - 1)}
-        </React.Fragment>
-      );
-      idx++;
-    }
-    if (reportRow) {
-      rows.push(
-        <React.Fragment key="report">
-          {timelineRow(reportRow.status, reportRow.content, idx === allRows.length - 1)}
-        </React.Fragment>
-      );
-      idx++;
-    }
-  }
-
-  return <div className="mt-2">{rows}</div>;
-};
-
 export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const [metaOpen, setMetaOpen] = useState<"tasks" | "files" | null>(null);
-  const [keywordSettingsOpen, setKeywordSettingsOpen] = useState(false);
   // 已完成任务汇总行展开控制
   const [historyOpen, setHistoryOpen] = useState(false);
   // 运行中任务折叠控制（默认展开，点击标题折叠成单行）
   const [collapsedRunningIds, setCollapsedRunningIds] = useState<Set<string>>(new Set());
+  // 子智能体进度卡片：追踪任务开始时间用于计算 elapsed
+  const taskStartTimesRef = useRef<Map<string, number>>(new Map());
   // 选库：持久化到 localStorage，会话间保持
   const [selectedDb, setSelectedDb] = useState<string>(() => {
     try {
@@ -228,9 +79,104 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
       return "aix_report";
     }
   });
-  const [dbConfigOpen, setDbConfigOpen] = useState(false);
+  // 选工作区：持久化到 localStorage
+  const [selectedWorkspace, setSelectedWorkspace] = useState<string>(() => {
+    try {
+      return localStorage.getItem("selectedWorkspace") || "default";
+    } catch {
+      return "default";
+    }
+  });
+  // 下拉框必须以「后端实际 active」为准：之前 selectedWorkspace 仅从 localStorage
+  // 初始化，会残留旧值（如上次激活过 workspace1），而后端 active 可能已回退 default
+  // → 下拉框显示 workspace1、实际运行时却走默认工作区。挂载时与 workspace-changed
+  // 后用后端 active 校正；手动切换序号防止异步响应覆盖用户刚做的选择。
+  const workspaceActionSeqRef = useRef(0);
+  const syncWorkspaceFromBackend = useCallback(async () => {
+    const seq = workspaceActionSeqRef.current;
+    try {
+      const info = await getActiveWorkspace();
+      if (!info.active) return;
+      if (workspaceActionSeqRef.current !== seq) return; // 用户已手动切换，丢弃过期校正
+      setSelectedWorkspace(info.active);
+      try {
+        localStorage.setItem("selectedWorkspace", info.active);
+      } catch {
+        /* ignore */
+      }
+    } catch {
+      /* 后端不可用时保持当前值 */
+    }
+  }, []);
+
+  useEffect(() => {
+    syncWorkspaceFromBackend();
+    window.addEventListener("workspace-changed", syncWorkspaceFromBackend);
+    return () =>
+      window.removeEventListener("workspace-changed", syncWorkspaceFromBackend);
+  }, [syncWorkspaceFromBackend]);
+  // 选模型（P1-9）：modelId，持久化到 localStorage；空串 = 跟随激活 provider 默认模型
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    try {
+      return localStorage.getItem("selectedModel") || "";
+    } catch {
+      return "";
+    }
+  });
+  // 所选模型所属 provider（llm_route）；空串 = 跟随激活 provider
+  const [selectedProvider, setSelectedProvider] = useState<string>(() => {
+    try {
+      return localStorage.getItem("selectedProvider") || "";
+    } catch {
+      return "";
+    }
+  });
+  // 是否已配置模型：后端不再回退 .env，未配置（或配置服务不可用）时禁止发送。
+  const [modelConfigured, setModelConfigured] = useState<boolean | null>(null);
+
+  // 拉取模型配置，判断是否有可用模型；配置弹窗保存/删除后（model-configs-changed）刷新。
+  const refreshModelConfig = useCallback(async () => {
+    try {
+      const r = await listModelConfigs();
+      // 至少一个 provider 且其 models 非空才视为「已配置」
+      const hasModel = (r.providers || []).some(
+        (p) => (p.models || []).some((m) => !!m.id)
+      );
+      setModelConfigured(hasModel);
+    } catch {
+      // 配置服务不可用也视为未配置（禁止发送，避免空请求打到后端）
+      setModelConfigured(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshModelConfig();
+    window.addEventListener("model-configs-changed", refreshModelConfig);
+    return () =>
+      window.removeEventListener("model-configs-changed", refreshModelConfig);
+  }, [refreshModelConfig]);
   const tasksContainerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // ── TTFT 测量（两步法）──
+  // Step1：handleSubmit 设置 sendTimeRef → 当新 human 消息出现在 messages 中时，
+  // 将发送时间写入 humanSendTimeMap[humanMsgId]，然后清零 sendTimeRef。
+  // Step2：isLoading 期间，找到最后一条未配对的 human 消息，其后第一条有内容的
+  // AI 消息即为该轮的响应，计算 TTFT。auto-continue 不设置 sendTimeRef，无 TTFT。
+  const sendTimeRef = useRef<number>(0);
+  const humanSendTimeMapRef = useRef<Record<string, number>>({}); // humanMsgId → 发送时间戳
+  const pairedHumanIdsRef = useRef<Set<string>>(new Set()); // 已配对过 TTFT 的 human 消息
+  const [ttftMap, setTtftMap] = useState<Record<string, number>>({}); // aiMessageId → TTFT ms
+  const [msgDurationMap, setMsgDurationMap] = useState<Record<string, number>>({}); // aiMessageId → total ms
+  const aiMsgStartRef = useRef<Record<string, number>>({}); // aiMessageId → start timestamp
+
+  // 平均首 token 用时 = 各轮（已测到 TTFT）首 token 用时之和 / 轮数
+  // 过滤超出合理范围的值（> 5 分钟视为测量异常，丢弃）
+  const avgTtftMs = useMemo(() => {
+    const values = Object.values(ttftMap).filter((v) => v > 0 && v <= 5 * 60 * 1000);
+    if (values.length === 0) return undefined;
+    return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+  }, [ttftMap]);
 
   const [input, setInput] = useState("");
   const { scrollRef, contentRef } = useStickToBottom();
@@ -247,8 +193,10 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
 
   const {
     stream,
+    threadId,
     messages,
     queryTasks,
+    asyncTasks,
     runningQueryCount,
     queryInProgress,
     files,
@@ -261,12 +209,268 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     stopStream,
     resumeInterrupt,
     currentContinueTaskKeyRef,
+    tokenStats,
   } = useChatContext();
 
-  // 发送可用性：仅受"智能体未就绪"限制。
+  // ── P1-3 SQL 审批：子 agent run_sql 被闸门 interrupt 后，sync 环路把
+  // HITL payload 中继到 async_tasks[task].awaiting_approval，C 方案轮询读到
+  // 后在此渲染审批卡；决策经后端恢复端点回传，子 run 自动继续。──────
+  // resolvedApprovals：已提交决策的任务（乐观隐藏卡片，等轮询清除 awaiting_approval）
+  const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set());
+  const [approvingTaskIds, setApprovingTaskIds] = useState<Set<string>>(new Set());
+
+  const pendingApprovals = useMemo(() => {
+    if (!asyncTasks || typeof asyncTasks !== "object") return [];
+    return Object.entries(asyncTasks as Record<string, any>)
+      .map(([id, t]) => {
+        const taskId = t?.task_id || t?.thread_id || id;
+        return { taskId, task: t };
+      })
+      .filter(
+        ({ taskId, task }) =>
+          Boolean(task?.awaiting_approval) && !resolvedApprovals.has(taskId)
+      )
+      .map(({ taskId, task }) => ({
+        taskId,
+        title: queryTasks.find((q) => q.task_id === taskId)?.title,
+        approval: task.awaiting_approval as SqlApprovalPayload,
+      }));
+  }, [asyncTasks, resolvedApprovals, queryTasks]);
+
+  // ── 子智能体进度卡片：从 queryTasks 派生进度数据，在输入区合并展示 ──
+  // 单个任务 = 查询阶段（子智能体步骤）+ 结果阶段（图表/报告）
+  // 任务开始时间优先取后端持久化的 created_at（async_tasks 随 thread state 重放，
+  // 刷新页面不重置计时）；仅当该任务尚未带 created_at 时才用客户端首次可见时间兜底。
+  const taskCreatedAt = useMemo(() => {
+    const m = new Map<string, number>();
+    if (asyncTasks && typeof asyncTasks === "object") {
+      for (const [key, t] of Object.entries(asyncTasks as Record<string, any>)) {
+        const taskId = t?.task_id || t?.thread_id || key;
+        const ts = t?.created_at ? Date.parse(t.created_at) : NaN;
+        if (typeof taskId === "string" && !Number.isNaN(ts)) m.set(taskId, ts);
+      }
+    }
+    return m;
+  }, [asyncTasks]);
+
+  // 已完成任务的 task_id 集合：后端 async_tasks.status 已是终态（success/error/…）
+  // 说明子智能体查询阶段已结束。若 active_queries 因重启竞态残留 true，前端不再
+  // 渲染"执行中"卡片（否则已完成会话会永远显示一个从 0 涨的计时器）。
+  const terminalTaskIds = useMemo(() => {
+    const s = new Set<string>();
+    const TERMINAL = new Set(["success", "error", "cancelled", "timeout", "interrupted", "failed"]);
+    if (asyncTasks && typeof asyncTasks === "object") {
+      for (const [key, t] of Object.entries(asyncTasks as Record<string, any>)) {
+        const taskId = t?.task_id || t?.thread_id || key;
+        if (typeof taskId === "string" && TERMINAL.has(t?.status)) s.add(taskId);
+      }
+    }
+    return s;
+  }, [asyncTasks]);
+
+  const subAgentProgresses = useMemo(() => {
+    return queryTasks
+      .filter((qt) => qt.status === "running" && !terminalTaskIds.has(qt.task_id))
+      .map((qt) => {
+        const steps = qt.steps || [];
+        const resultTodos = [
+          ...(qt.chartStep ? [qt.chartStep] : []),
+          ...(qt.reportStep ? [qt.reportStep] : []),
+        ];
+        const now = Date.now();
+        let start = taskCreatedAt.get(qt.task_id);
+        if (typeof start !== "number") {
+          start = taskStartTimesRef.current.get(qt.task_id);
+        }
+        if (typeof start !== "number") {
+          start = now;
+          taskStartTimesRef.current.set(qt.task_id, start);
+        }
+        // 时钟偏移防御：created_at 晚于当前时间时归位到 now，避免负时长
+        if (start > now) start = now;
+        const elapsedMs = now - start;
+        const elapsed =
+          elapsedMs < 60000
+            ? `${Math.floor(elapsedMs / 1000)}s`
+            : `${Math.floor(elapsedMs / 60000)}m${Math.floor((elapsedMs % 60000) / 1000)}s`;
+
+        return {
+          taskId: qt.task_id,
+          agentName: qt.agent_name || "nl2sql",
+          queryTitle: qt.title || undefined,
+          status: "running" as const,
+          todos: steps,
+          resultTodos,
+          elapsed,
+          latestThinking: null,
+        };
+      });
+  }, [queryTasks, taskCreatedAt, terminalTaskIds]);
+
+  // ── 并发多进度收缩：≥2 个 running 任务时自动折叠所有运行中卡片，省页面空间 ──
+  // 折叠优先级：用户手动展开（userTouchedRunningIds 有该 taskId）> 自动折叠。
+  // 单个任务时自动展开（除非用户手动折叠过）。
+  const multiRunning = (subAgentProgresses?.length ?? 0) >= 2;
+  // 用户主动点击过（展开/折叠）的任务：之后的自动折叠不再干预它
+  const [userTouchedRunningIds, setUserTouchedRunningIds] = useState<Set<string>>(new Set());
+  // 组级收缩（第 2 层）：≥2 个任务时把整个 running 区收缩为一行汇总，省页面空间。
+  // 默认收缩；点击汇总行可展开各卡片 / 再收缩。单任务时无此控制行，不受影响。
+  const [runningGroupCollapsed, setRunningGroupCollapsed] = useState(true);
+
+  // ── P1-8 停止查询：输入区卡片「⏹ 停止」→ 后端取消子 run + 回写 cancelled ──
+  // 取消后无需手动刷新：C 方案轮询拾取 cancelled 态，卡片自动移入「已结束」。
+  const [cancellingTaskIds, setCancellingTaskIds] = useState<Set<string>>(new Set());
+  const handleCancelTask = useCallback(
+    async (taskId: string) => {
+      if (!threadId) return;
+      setCancellingTaskIds((prev) => new Set(prev).add(taskId));
+      try {
+        await cancelTask(taskId, threadId);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "取消失败，请重试";
+        // 任务已自然结束（409）不视为错误，静默即可
+        if (!msg.includes("已结束")) toast.error(msg);
+      } finally {
+        setCancellingTaskIds((prev) => {
+          const next = new Set(prev);
+          next.delete(taskId);
+          return next;
+        });
+      }
+    },
+    [threadId]
+  );
+
+  const handleSqlApprovalDecision = useCallback(
+    async (
+      taskId: string,
+      decision: SqlApprovalDecision,
+      actionCount: number
+    ) => {
+      if (!threadId) return;
+      setApprovingTaskIds((prev) => new Set(prev).add(taskId));
+      try {
+        // HITL 中间件要求 decisions 数量 == 被拦截调用数：单卡决策复制到全部
+        await decideSqlApproval(taskId, {
+          main_thread_id: threadId,
+          decisions: Array.from(
+            { length: Math.max(1, actionCount) },
+            () => decision
+          ),
+          db_name: selectedDb,
+        });
+        setResolvedApprovals((prev) => new Set(prev).add(taskId));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "审批提交失败，请重试";
+        // 任务已无待审批 interrupt（刷新竞态/已被处理）→ 静默隐藏卡片
+        if (msg.includes("没有待审批")) {
+          setResolvedApprovals((prev) => new Set(prev).add(taskId));
+        } else {
+          toast.error(msg);
+        }
+      } finally {
+        setApprovingTaskIds((prev) => {
+          const next = new Set(prev);
+          next.delete(taskId);
+          return next;
+        });
+      }
+    },
+    [threadId, selectedDb]
+  );
+
+  // ── P1-1 消息反馈：threadId 变更时拉取该会话已有反馈，回显图标态 ──
+  const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRecord>>({});
+  useEffect(() => {
+    let cancelled = false;
+    if (!threadId) {
+      setFeedbackMap({});
+      return;
+    }
+    listThreadFeedback(threadId)
+      .then((list) => {
+        if (cancelled) return;
+        const map: Record<string, FeedbackRecord> = {};
+        for (const r of list) map[r.message_id] = r;
+        setFeedbackMap(map);
+      })
+      .catch(() => {
+        /* 反馈 API 不可用时不阻塞聊天 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId]);
+
+  const handleFeedbackChange = useCallback(
+    (messageId: string, feedback: FeedbackRecord | null) => {
+      setFeedbackMap((prev) => {
+        const next = { ...prev };
+        if (feedback) {
+          next[messageId] = feedback;
+        } else {
+          delete next[messageId];
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  // ── P1-5 会话分叉：从某消息复制出截止到该消息的新会话并跳转 ──
+  // 后端编排 copy+回退（/api/threads/{id}/fork）；成功后刷新会话列表并切到新会话。
+  const [, setThreadIdParam] = useQueryState("threadId");
+  const [forkingMessageId, setForkingMessageId] = useState<string | null>(null);
+  const handleFork = useCallback(
+    async (messageId: string) => {
+      if (!threadId || forkingMessageId) return;
+      setForkingMessageId(messageId);
+      try {
+        const res = await forkThread(threadId, messageId);
+        // 刷新会话列表（ThreadList 监听 thread-title-updated 事件）
+        window.dispatchEvent(new CustomEvent("thread-title-updated"));
+        toast.success("已创建分叉会话，正在切换…");
+        await setThreadIdParam(res.thread_id);
+      } catch (e) {
+        toast.error(`分叉失败：${e instanceof Error ? e.message : e}`);
+      } finally {
+        setForkingMessageId(null);
+      }
+    },
+    [threadId, forkingMessageId, setThreadIdParam]
+  );
+
+  // ── P1-4 自动标题：新会话首条消息发出后，用 LLM 生成短标题写入 metadata.title ──
+  // 提交时 threadId 尚不存在（由 useChat.onThreadId 回写 URL），先把首条文本记入
+  // pendingTitleTextRef；threadId 出现后异步生成标题并写回，失败则不写
+  // （会话列表自然回退到「首条消息截断」的占位标题）。
+  const client = useClient();
+  const pendingTitleTextRef = useRef<string | null>(null);
+  useEffect(() => {
+    const text = pendingTitleTextRef.current;
+    if (!threadId || !text) return;
+    pendingTitleTextRef.current = null;
+    let cancelled = false;
+    (async () => {
+      const title = await generateAutoTitle(text);
+      if (cancelled || !title) return;
+      try {
+        await setThreadTitle(client, threadId, title);
+        // 通知会话列表立即刷新（ThreadList 监听该事件）
+        window.dispatchEvent(new CustomEvent("thread-title-updated"));
+      } catch {
+        /* 写标题失败不影响聊天 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, client]);
+
+  // 发送可用性：智能体未就绪 / 未配置模型（后端不再回退 .env）时禁止发送。
   // 不再包含 isLoading —— 续跑 run 期间用户消息优先（sendMessage 会中断续跑）；
   // 用户 run（委派/用户消息）期间由 handleSubmit 提示稍候，但输入/回车始终可用。
-  const submitDisabled = !assistant;
+  const submitDisabled = !assistant || !modelConfigured;
 
   // 数据查询意图判断：命中查询关键词才视为"查询"，查询进行中才拦截；
   // "你好"等闲聊消息不拦截，正常发送。
@@ -312,8 +516,16 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           duration: 2500,
         });
       }
-      // 随消息传入 db_name（configurable → 后端主 agent → 透传子 agent run_sql）
-      const configurable = { db_name: selectedDb };
+      // P1-4：新会话（尚无 threadId）记下首条文本，threadId 生成后自动出标题
+      if (!threadId && messageText) pendingTitleTextRef.current = messageText;
+      // 随消息传入 db_name（configurable → 后端主 agent → 透传子 agent run_sql）；
+      // llm_route / llm_model（P1-9）：后端 ThinkingToggleMiddleware 按 provider + 模型重建模型，免重启切换
+      // enable_thinking（P1-9）：前端「开启思考过程」开关 → 后端真实开/关思考
+      const configurable: Record<string, string> = { db_name: selectedDb };
+      if (selectedProvider) configurable.llm_route = selectedProvider;
+      if (selectedModel) configurable.llm_model = selectedModel;
+      configurable.enable_thinking = getEnableThinking() ? "true" : "false";
+      sendTimeRef.current = Date.now(); // TTFT 测量：记录发送时间
       sendMessage(messageText, contentBlocks, configurable);
       setInput("");
       resetBlocks();
@@ -321,7 +533,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     [
       input, contentBlocks, isLoading, sendMessage, submitDisabled,
       runningQueryCount, queryInProgress, isQueryMessage,
-      currentContinueTaskKeyRef, selectedDb,
+      currentContinueTaskKeyRef, selectedDb, selectedModel, selectedProvider, threadId,
     ]
   );
 
@@ -453,7 +665,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             status: "completed" as const,
             result: extractStringFromMessageContent(message),
             artifact: (message as any).artifact,
-          };
+          } as ToolCall;
           break;
         }
       } else if (message.type === "human") {
@@ -465,54 +677,105 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     });
 
     const processedArray = Array.from(messageMap.values());
+
+    // ── 跨消息图表去重：同一图表可能来自消息正文（bodyIframes）或工具调用结果
+    // （toolIframes），用 src 前 100 字符做指纹，全局只保留首次出现。 ──
+    const seenChartFingerprints = new Set<string>();
+    const getFingerprint = (iframeHtml: string) => {
+      const srcMatch = iframeHtml.match(/src="([^"]+)"/);
+      // 用完整 src 做精确比较：不同图表 base64 不同，相同图表 base64 相同。
+      return srcMatch ? srcMatch[1] : iframeHtml;
+    };
+    for (const data of processedArray) {
+      if (data.message.type !== "ai") continue;
+
+      // 1) 从消息正文收集 iframe
+      const content = extractStringFromMessageContent(data.message) || "";
+      const bodyIframes = extractInteractiveChartIframes(content);
+
+      // 2) 从图表工具调用结果收集 iframe
+      const toolIframes: Array<{ index: number; html: string }> = [];
+      data.toolCalls.forEach((tc, idx) => {
+        if (!tc.result || typeof tc.result !== "string") return;
+        const isChartTool = chartToolNames.some(
+          (n) => tc.name === n || (tc.name || "").includes(n)
+        );
+        if (!isChartTool) return;
+        const iframes = extractInteractiveChartIframes(tc.result);
+        for (const html of iframes) {
+          toolIframes.push({ index: idx, html });
+        }
+      });
+
+      // 3) 合并所有来源，标记重复
+      const allIframes = [
+        ...bodyIframes.map((h) => ({ html: h, source: "body" as const })),
+        ...toolIframes.map((t) => ({ html: t.html, source: "tool" as const, index: t.index })),
+      ];
+      const bodyToRemove: string[] = [];
+      const toolIndicesToClear: number[] = [];
+      for (const item of allIframes) {
+        const fp = getFingerprint(item.html);
+        if (seenChartFingerprints.has(fp)) {
+          if (item.source === "body") bodyToRemove.push(item.html);
+          else toolIndicesToClear.push((item as any).index);
+        } else {
+          seenChartFingerprints.add(fp);
+        }
+      }
+
+      // 4) 从正文中剥离重复 iframe
+      if (bodyToRemove.length > 0 && typeof data.message.content === "string") {
+        let newContent = data.message.content;
+        for (const iframe of bodyToRemove) {
+          newContent = newContent.replace(iframe, "");
+        }
+        data.message = { ...data.message, content: newContent };
+      }
+      // 5) 清除重复的图表工具调用结果
+      for (const idx of toolIndicesToClear) {
+        data.toolCalls[idx] = { ...data.toolCalls[idx], result: "" };
+      }
+    }
+
+    let roundIndex = 0;
     const withShowAvatar = processedArray.map((data, index) => {
       const prevMessage = index > 0 ? processedArray[index - 1].message : null;
+      if (data.message.type === "human") roundIndex += 1;
       return {
         ...data,
         showAvatar: data.message.type !== prevMessage?.type,
+        roundIndex,
       };
     });
-
-    // ── 附随图表：最新生成的 echarts 交互 iframe 附到下一个「有正文且无工具调用」的
-    // AI 消息（报告呈现消息）上方。生成步骤消息（含图表工具调用）本身已在正文/工具卡
-    // 渲染图表；报告消息只有文字，把同轮最新图表附随过去，让报告也呈现交互图表。 ──
-    let pendingChart: string | null = null;
-    for (const d of withShowAvatar) {
-      const msgText = extractStringFromMessageContent(d.message) || "";
-      const html = extractInteractiveChartIframes(msgText).join("");
-      if (html) {
-        pendingChart = html;
-      } else {
-        const fromTools = (d.toolCalls || [])
-          .filter(
-            (tc: ToolCall) =>
-              chartToolNames.some((n) => (tc.name || "").includes(n)) &&
-              typeof tc.result === "string"
-          )
-          .map((tc: ToolCall) =>
-            extractInteractiveChartIframes(tc.result as string).join("")
-          )
-          .join("");
-        if (fromTools) pendingChart = fromTools;
-      }
-      if (
-        pendingChart &&
-        d.message.type === "ai" &&
-        !(d.toolCalls && d.toolCalls.length > 0) &&
-        msgText.trim()
-      ) {
-        (d as any).chartAttachmentHtml = pendingChart;
-        pendingChart = null;
-      }
-    }
 
     return withShowAvatar as Array<{
       message: Message;
       toolCalls: ToolCall[];
       showAvatar: boolean;
-      chartAttachmentHtml?: string;
+      roundIndex: number;
     }>;
   }, [messages, interrupt]);
+
+  // 每轮 token 维度：按后端 steps[].round_index 聚合（轮号 = human 消息计数）。
+  // 每轮可能有多步 LLM 调用（主 agent + 子 agent），累加得到该轮总计。
+  const roundStatsMap = useMemo(() => {
+    const map = new Map<
+      number,
+      { llmMs: number; input: number; output: number; cacheRead: number }
+    >();
+    for (const s of tokenStats?.steps ?? []) {
+      const r = s.round_index;
+      if (!r) continue; // round_index 0 = 后端无法判定，跳过
+      const cur = map.get(r) ?? { llmMs: 0, input: 0, output: 0, cacheRead: 0 };
+      cur.llmMs += s.total_llm_ms ?? 0;
+      cur.input += s.total_input_tokens ?? 0;
+      cur.output += s.total_output_tokens ?? 0;
+      cur.cacheRead += s.total_cache_read_tokens ?? 0;
+      map.set(r, cur);
+    }
+    return map;
+  }, [tokenStats]);
 
   // 主智能体自身的顺序步骤（查询进度由 queryTasks 独立展示，不再注入）
   const hasFiles = Object.keys(files).length > 0;
@@ -548,10 +811,93 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     });
 
     return () => window.cancelAnimationFrame(frameId);
-  }, [lastMessageId, processedMessages.length, isLoading, scrollRef]);
+    // pendingApprovals.length：审批卡出现时也滚动到底部，确保用户看得到
+  }, [lastMessageId, processedMessages.length, isLoading, scrollRef, pendingApprovals.length]);
+
+  // ── TTFT 测量（两步法）──
+  // Step1：handleSubmit 设置 sendTimeRef → 当新 human 消息出现在 messages 中时，
+  // 将发送时间写入 humanSendTimeMap[humanMsgId]，然后清零 sendTimeRef。
+  useEffect(() => {
+    if (sendTimeRef.current === 0) return;
+    const humanMsgs = messages.filter((m) => m.type === "human");
+    for (const hm of humanMsgs) {
+      if (!hm.id || humanSendTimeMapRef.current[hm.id]) continue;
+      // 新 human 消息：记录发送时间
+      humanSendTimeMapRef.current[hm.id] = sendTimeRef.current;
+      sendTimeRef.current = 0;
+      break; // 只处理第一个新 human
+    }
+  }, [messages]);
+
+  // Step2：isLoading 期间，找到最新未配对的 human 消息，其后第一条有内容的
+  // AI 消息即为该轮响应，计算 TTFT。auto-continue 不设置 sendTimeRef，无 TTFT。
+  useEffect(() => {
+    if (!isLoading) return;
+    // 找到最新未配对的 human 消息
+    const humanMsgs = messages.filter((m) => m.type === "human");
+    let targetHumanId: string | null = null;
+    for (let i = humanMsgs.length - 1; i >= 0; i--) {
+      const hid = humanMsgs[i].id;
+      if (hid && humanSendTimeMapRef.current[hid] && !pairedHumanIdsRef.current.has(hid)) {
+        targetHumanId = hid;
+        break;
+      }
+    }
+    if (!targetHumanId) return;
+    const sendAt = humanSendTimeMapRef.current[targetHumanId];
+    // 防御：时间戳异常则跳过
+    if (sendAt <= 0) return;
+    // 找到该 human 消息之后第一条有内容的 AI 消息
+    const targetHumanIdx = messages.findIndex((m) => m.id === targetHumanId);
+    if (targetHumanIdx < 0) return;
+    for (let j = targetHumanIdx + 1; j < messages.length; j++) {
+      const m = messages[j];
+      if (m.type !== "ai" || !m.id) continue;
+      if (ttftMap[m.id]) continue;
+      const content = extractStringFromMessageContent(m) || "";
+      if (!content.trim()) continue;
+      const now = Date.now();
+      const delta = now - sendAt;
+      if (delta <= 0 || delta > 30 * 60 * 1000) {
+        pairedHumanIdsRef.current.add(targetHumanId); // 异常也标记配对，避免死循环
+        return;
+      }
+      setTtftMap((prev) => ({ ...prev, [m.id]: delta }));
+      aiMsgStartRef.current[m.id] = sendAt;
+      pairedHumanIdsRef.current.add(targetHumanId);
+      break;
+    }
+  }, [messages, isLoading, ttftMap]);
+
+  // 当流式结束（isLoading true→false）：记录 duration、重置
+  const prevLoadingRef = useRef(isLoading);
+  useEffect(() => {
+    if (prevLoadingRef.current && !isLoading) {
+      const aiMessages = messages.filter((m) => m.type === "ai");
+      const updates: Record<string, number> = {};
+      for (const m of aiMessages) {
+        if (m.id && aiMsgStartRef.current[m.id] && !msgDurationMap[m.id]) {
+          updates[m.id] = Date.now() - aiMsgStartRef.current[m.id];
+        }
+      }
+      if (Object.keys(updates).length > 0) {
+        setMsgDurationMap((prev) => ({ ...prev, ...updates }));
+      }
+    }
+    prevLoadingRef.current = isLoading;
+  }, [isLoading, messages, msgDurationMap]);
+  const isIdle = !isThreadLoading && processedMessages.length === 0;
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className={cn("flex flex-1 flex-col overflow-hidden", isIdle && "justify-center")}>
+      {isIdle ? (
+        <div className="flex flex-none flex-col items-center px-6 pb-10">
+          <WeintLogo size={36} />
+          <h1 className="mt-6 text-3xl font-semibold tracking-tight text-foreground">
+            探索未至之境
+          </h1>
+        </div>
+      ) : (
       <div
         className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
         ref={scrollRef}
@@ -597,7 +943,19 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                       isLastMessage ? resumeInterrupt : undefined
                     }
                     graphId={isLastMessage ? assistant?.graph_id : undefined}
-                    chartAttachmentHtml={data.chartAttachmentHtml}
+                    threadId={threadId ?? undefined}
+                    feedback={
+                      data.message.id
+                        ? feedbackMap[data.message.id] ?? null
+                        : null
+                    }
+                    dbContext={selectedDb}
+                    onFeedbackChange={handleFeedbackChange}
+                    onFork={handleFork}
+                    forkBusy={forkingMessageId !== null}
+                    ttftMs={data.message.id ? ttftMap[data.message.id] : undefined}
+                    durationMs={data.message.id ? msgDurationMap[data.message.id] : undefined}
+                    roundStat={roundStatsMap.get(data.roundIndex)}
                   />
                 );
               })}
@@ -605,13 +963,14 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           )}
         </div>
       </div>
+      )}
 
       <div className="flex-shrink-0 bg-background">
         <div
           ref={dropRef}
           className={cn(
             "mx-4 mb-6 flex flex-shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background",
-            "mx-auto w-[calc(100%-32px)] max-w-[1024px] transition-colors duration-200 ease-in-out",
+            "mx-auto w-[calc(100%-32px)] max-w-[896px] transition-colors duration-200 ease-in-out",
             dragOver && "border-primary border-2 border-dotted"
           )}
         >
@@ -619,95 +978,124 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             <div className="flex max-h-72 flex-col overflow-y-auto border-b border-border bg-sidebar empty:hidden">
               {!metaOpen && (
                 <>
-                  {/* 并发多查询进度（4 层分组：running 完整 / 最近完成单行 / 历史汇总） */}
+                  {/* 并发多查询进度（running 彩色卡片 / 已完成汇总） */}
                   {queryTasks.length > 0 && (() => {
                     // 分组：running 任务 + 已完成任务（汇总一行，点击展开）
-                    const runningTasks = queryTasks.filter((t) => t.status === "running");
-                    const doneTasks = queryTasks.filter((t) => t.status !== "running");
-
-                    // 计算任务进度比例（查询 + 图表 + 报告 三段一起算）
-                    const progressOf = (qt: any) => {
-                      const all = [
-                        ...(qt.steps || []),
-                        ...(qt.chartStep ? [qt.chartStep] : []),
-                        ...(qt.reportStep ? [qt.reportStep] : []),
-                      ];
-                      if (all.length === 0) return 0;
-                      const done = all.filter((s: any) => s.status === "completed").length;
-                      return Math.round((done / all.length) * 100);
-                    };
+                    // 后端 async_tasks 终态但 active_queries 残留 true 的任务也算已完成
+                    //（否则"已完成会话"会被漏计数、或消失不见）
+                    const doneTasks = queryTasks.filter(
+                      (t) => t.status !== "running" || terminalTaskIds.has(t.task_id)
+                    );
 
                     return (
                       <div className="flex flex-col divide-y divide-border">
-                        {/* 1. running 任务：完整卡片 */}
-                        {runningTasks.map((qt) => {
-                          const pct = progressOf(qt);
-                          const collapsed = collapsedRunningIds.has(qt.task_id);
-                          const allSteps = [
-                            ...(qt.steps || []),
-                            ...(qt.chartStep ? [qt.chartStep] : []),
-                            ...(qt.reportStep ? [qt.reportStep] : []),
-                          ];
-                          const doneCount = allSteps.filter((s: any) => s.status === "completed").length;
-                          return (
-                            <div key={qt.task_id} className="px-[18px] py-2.5">
-                              <button
-                                type="button"
-                                className="flex w-full cursor-pointer items-center gap-2 text-sm"
-                                onClick={() => {
-                                  setCollapsedRunningIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(qt.task_id)) next.delete(qt.task_id);
-                                    else next.add(qt.task_id);
-                                    return next;
-                                  });
-                                }}
-                              >
-                                <Clock size={14} className="text-primary shrink-0" />
-                                <span className="truncate font-medium text-foreground">{qt.title}</span>
-                                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                                  进行中 {allSteps.length > 0 ? `${doneCount}/${allSteps.length}` : ""} {collapsed ? "▸" : "▾"}
-                                </span>
-                              </button>
-                              {/* 折叠时仅显示进度条（紧凑），展开时显示时间线（查询/图表/报告阶段） */}
-                              {!collapsed && (
-                                <>
-                                  {qt.steps.length > 0 && (
-                                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted/50">
-                                      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
-                                    </div>
-                                  )}
-                                  {renderTimeline(qt)}
-                                </>
-                              )}
-                            </div>
-                          );
-                        })}
+                        {/* 1. running 任务：组级收缩行 + 彩色进度卡片
+                            - 第 1 层：单卡片点击标题折叠（用户手动 / 并发≥2 自动）
+                            - 第 2 层：≥2 个任务时整体收缩为一行汇总（默认收缩，省页面空间） */}
+                        {multiRunning && (
+                          <div className="px-[18px] py-2">
+                            <button
+                              type="button"
+                              className="flex w-full cursor-pointer items-center gap-2 text-sm"
+                              onClick={() => setRunningGroupCollapsed((v) => !v)}
+                              title={runningGroupCollapsed ? "展开各查询进度" : "收缩为一行汇总"}
+                            >
+                              <Loader2 size={14} className="shrink-0 animate-spin text-blue-500" />
+                              <span className="font-medium text-foreground">
+                                {subAgentProgresses.length} 个查询进行中
+                              </span>
+                              <span className="ml-2 min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">
+                                {subAgentProgresses
+                                  .map((p) => {
+                                    const all = [...(p.todos || []), ...(p.resultTodos || [])];
+                                    const done = all.filter((s) => s.status === "completed").length;
+                                    return `${p.agentName} ${done}/${all.length}`;
+                                  })
+                                  .join(" · ")}
+                              </span>
+                              <span className="shrink-0 text-xs text-muted-foreground">
+                                {runningGroupCollapsed ? "▸" : "▾"}
+                              </span>
+                            </button>
+                          </div>
+                        )}
+                        {(!runningGroupCollapsed || !multiRunning) &&
+                          subAgentProgresses.map((p) => {
+                            const userTouched = userTouchedRunningIds.has(p.taskId);
+                            const collapsed =
+                              userTouched
+                                ? collapsedRunningIds.has(p.taskId) // 用户手动操作过：以其折叠态为准
+                                : multiRunning; // 未操作过：并发≥2 自动折叠，单任务自动展开
+                            return (
+                              <div key={p.taskId} className="px-[18px] py-1.5">
+                                <SubAgentProgressCard
+                                  progress={p}
+                                  fullWidth
+                                  collapsed={collapsed}
+                                  onToggle={() => {
+                                    // 记录用户主动操作，之后的自动折叠不再覆盖它
+                                    setUserTouchedRunningIds((prev) => {
+                                      const next = new Set(prev);
+                                      next.add(p.taskId);
+                                      return next;
+                                    });
+                                    setCollapsedRunningIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(p.taskId)) next.delete(p.taskId);
+                                      else next.add(p.taskId);
+                                      return next;
+                                    });
+                                  }}
+                                  onCancel={() => handleCancelTask(p.taskId)}
+                                  cancelling={cancellingTaskIds.has(p.taskId)}
+                                />
+                              </div>
+                            );
+                          })}
 
-                        {/* 2. 已完成任务：汇总一行，点击展开全部列表（计数与内容一致） */}
-                        {doneTasks.length > 0 && (
+                        {/* 2. 已终止任务：汇总一行，点击展开全部列表（计数与内容一致）
+                            P1-7：区分成功/失败/取消/超时——非全部成功时标「已结束」，
+                            展开行按状态给图标（✓ 成功 / ✕ 失败 / ⊘ 取消·超时·中断） */}
+                        {doneTasks.length > 0 && (() => {
+                          const allSuccess = doneTasks.every((t) => t.status === "success");
+                          const doneIcon = (st: string) =>
+                            st === "success" ? "✓" : st === "error" ? "✕" : "⊘";
+                          return (
                           <div className="px-[18px] py-2">
                             <button
                               type="button"
                               className="flex w-full cursor-pointer items-center gap-2 text-sm"
                               onClick={() => setHistoryOpen((v) => !v)}
                             >
-                              <CheckCircle size={14} className="text-success/80 shrink-0" />
-                              <span className="font-medium text-foreground">✅ 已完成 {doneTasks.length} 个查询</span>
+                              <CheckCircle size={14} className={allSuccess ? "text-success/80 shrink-0" : "text-muted-foreground shrink-0"} />
+                              <span className="font-medium text-foreground">
+                                {allSuccess
+                                  ? `✅ 已完成 ${doneTasks.length} 个查询`
+                                  : `🏁 已结束 ${doneTasks.length} 个查询`}
+                              </span>
                               <span className="ml-auto shrink-0 text-xs text-muted-foreground">{historyOpen ? "▾" : "▸"}</span>
                             </button>
                             {historyOpen && (
                               <div className="mt-1.5 flex flex-col">
-                                {doneTasks.map((qt) => (
-                                  <div key={qt.task_id} className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
-                                    <span className="w-3 shrink-0 text-center">✓</span>
-                                    <span className="truncate">{qt.title}</span>
-                                  </div>
-                                ))}
+                                {doneTasks.map((qt) => {
+                                  const qtErr = (asyncTasks as Record<string, any>)?.[qt.task_id]?.error as string | undefined;
+                                  return (
+                                    <div key={qt.task_id} className="flex flex-col gap-0.5 py-1 text-xs text-muted-foreground">
+                                      <div className="flex items-center gap-2">
+                                        <span className="w-3 shrink-0 text-center">{doneIcon(qt.status)}</span>
+                                        <span className="truncate" title={qtErr || undefined}>{qt.title}</span>
+                                      </div>
+                                      {qtErr && (
+                                        <div className="truncate pl-5 text-red-400" title={qtErr}>{qtErr}</div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     );
                   })()}
@@ -803,14 +1191,31 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
               )}
             </div>
           )}
+          {/* P1-3 SQL 审批卡：渲染在 composer 正上方 */}
+          {pendingApprovals.map(({ taskId, title, approval }) => (
+            <SqlApprovalCard
+              key={`sql-approval-${taskId}`}
+              taskId={taskId}
+              title={title}
+              approval={approval}
+              busy={approvingTaskIds.has(taskId)}
+              onDecide={handleSqlApprovalDecision}
+            />
+          ))}
           <form
             onSubmit={handleSubmit}
             className="flex flex-col"
           >
+            <StatsLine avgTtftMs={avgTtftMs} />
             <ContentBlocksPreview
               blocks={contentBlocks}
               onRemove={removeBlock}
             />
+            {modelConfigured === false && (
+              <div className="px-[18px] pt-2 text-xs text-amber-600 dark:text-amber-400">
+                尚未配置模型，无法发送消息。请点击右上角「设置」添加可用模型。
+              </div>
+            )}
             <textarea
               ref={textareaRef}
               value={input}
@@ -828,7 +1233,27 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                   className="flex cursor-pointer items-center gap-2 text-muted-foreground hover:text-primary"
                 >
                   <Plus className="size-5" />
-                  <span className="text-sm">上传 PDF 或图片</span>
+                </Label>
+                <input
+                  id="file-input"
+                  type="file"
+                  onChange={handleFileUpload}
+                  multiple
+                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+                  className="hidden"
+                />
+                <WorkspaceSelector
+                  value={selectedWorkspace}
+                  onChange={(v) => {
+                    workspaceActionSeqRef.current += 1;
+                    setSelectedWorkspace(v);
+                    try {
+                      localStorage.setItem("selectedWorkspace", v);
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                />
                 <DatabaseSelector
                   value={selectedDb}
                   onChange={(v) => {
@@ -839,31 +1264,31 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                       /* ignore */
                     }
                   }}
-                  onManage={() => setDbConfigOpen(true)}
                 />
-                </Label>
-                <input
-                  id="file-input"
-                  type="file"
-                  onChange={handleFileUpload}
-                  multiple
-                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => setKeywordSettingsOpen(true)}
-                  className="flex cursor-pointer items-center gap-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:text-primary"
-                  title="查询关键词设置"
-                  aria-label="查询关键词设置"
-                >
-                  <Settings className="size-4" />
-                </button>
               </div>
               <div className="flex justify-end gap-2">
+                <ModelSelector
+                  value={selectedModel}
+                  provider={selectedProvider}
+                  onChange={(sel) => {
+                    setSelectedModel(sel.modelId);
+                    setSelectedProvider(sel.provider);
+                    try {
+                      localStorage.setItem("selectedModel", sel.modelId);
+                      localStorage.setItem("selectedProvider", sel.provider);
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                />
+                <ContextRing
+                  selectedModel={selectedModel}
+                  selectedProvider={selectedProvider}
+                />
                 <Button
                   type={isLoading ? "button" : "submit"}
                   variant={isLoading ? "destructive" : "default"}
+                  className={isLoading ? undefined : "bg-[hsl(180_50%_42%)] hover:bg-[hsl(180_50%_37%)]"}
                   onClick={isLoading ? stopStream : handleSubmit}
                   disabled={
                     !isLoading &&
@@ -888,14 +1313,6 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           </form>
         </div>
       </div>
-      <KeywordSettingsDialog
-        open={keywordSettingsOpen}
-        onOpenChange={setKeywordSettingsOpen}
-      />
-      <DbConfigDialog
-        open={dbConfigOpen}
-        onOpenChange={setDbConfigOpen}
-      />
     </div>
   );
 });
