@@ -11,6 +11,10 @@ export interface ThreadItem {
   title: string;
   description: string;
   assistantId?: string;
+  /** 是否已有用户/自动标题（metadata.title），区别于首条消息截断的占位标题 */
+  hasCustomTitle?: boolean;
+  /** thread metadata（重命名合并写回用） */
+  metadata?: Record<string, unknown>;
 }
 // TODO  MS80OmFIVnBZMlhrdUp2bG43bmx2TG82TlhwNlpnPT06OTI4ZWJhYTE=
 
@@ -97,6 +101,15 @@ export function useThreads(props: {
       return threads.map((thread): ThreadItem => {
         let title = "无标题对话";
         let description = "";
+        let hasCustomTitle = false;
+
+        // P1-4：优先用户重命名 / LLM 自动标题（metadata.title）
+        const metadata = (thread.metadata as Record<string, unknown>) || {};
+        const customTitle = typeof metadata.title === "string" ? metadata.title.trim() : "";
+        if (customTitle) {
+          title = customTitle;
+          hasCustomTitle = true;
+        }
 
         try {
           if (thread.values && typeof thread.values === "object") {
@@ -109,7 +122,11 @@ export function useThreads(props: {
                 typeof firstHumanMessage.content === "string"
                   ? firstHumanMessage.content
                   : firstHumanMessage.content[0]?.text || "";
-              title = content.slice(0, 50) + (content.length > 50 ? "..." : "");
+              // 无自定义标题时用首条消息截断占位
+              if (!hasCustomTitle) {
+                title = content.slice(0, 50) + (content.length > 50 ? "..." : "");
+              }
+              if (!description) description = content.slice(0, 100);
             }
             const firstAiMessage = values.messages.find(
               (m: any) => m.type === "ai"
@@ -124,7 +141,7 @@ export function useThreads(props: {
           }
         } catch {
           // 回退到使用对话 ID
-          title = `对话 ${thread.thread_id.slice(0, 8)}`;
+          if (!hasCustomTitle) title = `对话 ${thread.thread_id.slice(0, 8)}`;
         }
 
         return {
@@ -134,6 +151,8 @@ export function useThreads(props: {
           title,
           description,
           assistantId,
+          hasCustomTitle,
+          metadata,
         };
       });
     },

@@ -4,6 +4,7 @@ export interface StandaloneConfig {
   langsmithApiKey?: string;
   queryKeywords?: string[]; // 数据查询触发关键词（前后端共用，注入 LLM prompt 用）
   enableThinking?: boolean; // 是否开启模型思考：开→后端真思考且前端显示；关→后端不思考且不显示（前后端共用）
+  sqlApprovalPolicy?: "ask" | "never"; // SQL 审批策略（P1-3）：ask=写/DDL/全表拉取弹审批卡（默认）；never=全部放行
 }
 // TODO  MC8yOmFIVnBZMlhrdUp2bG43bmx2TG82YjFwVU9BPT06YjNiYTlmNzE=
 
@@ -36,6 +37,17 @@ export function getEnableThinking(): boolean {
     return getConfig()?.enableThinking ?? true;
   } catch {
     return true;
+  }
+}
+
+// SQL 审批策略，缺省默认 "ask"（只对写/DDL/全表拉取弹审批卡，只读查询零打扰）
+export function getSqlApprovalPolicy(): "ask" | "never" {
+  if (typeof window === "undefined") return "ask";
+  try {
+    const p = getConfig()?.sqlApprovalPolicy;
+    return p === "never" ? "never" : "ask";
+  } catch {
+    return "ask";
   }
 }
 

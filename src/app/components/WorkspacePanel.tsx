@@ -226,12 +226,12 @@ export function WorkspacePanel({ active = true, onChanged }: WorkspacePanelProps
             </Label>
             <Input
               className="h-8 text-xs"
-              placeholder="如 D:\projects\my-workspace"
+              placeholder="如 /app/data/my-workspace"
               value={form.path}
               onChange={(e) => setForm({ ...form, path: e.target.value })}
             />
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              服务器上的文件夹完整路径；查询结果、报告、对话历史等数据将隔离保存在此目录。
+              服务器上的文件夹完整路径；查询结果、报告、对话历史等数据将隔离保存在此目录。路径不存在时自动创建。
             </p>
           </div>
           <div className="flex justify-end gap-2">

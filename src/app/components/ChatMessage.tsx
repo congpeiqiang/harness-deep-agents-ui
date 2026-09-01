@@ -5,7 +5,12 @@ import { SubAgentIndicator } from "@/app/components/SubAgentIndicator";
 import { ToolCallBox } from "@/app/components/ToolCallBox";
 import { MarkdownContent } from "@/app/components/MarkdownContent";
 import { MultimodalPreview } from "@/app/components/MultimodalPreview";
+import { ReportFileActions } from "@/app/components/ReportFileActions";
 import { ThinkingBlock } from "@/app/components/ThinkingBlock";
+import { MessageFeedbackActions, type RoundStat } from "@/app/components/MessageFeedbackActions";
+import type { FeedbackRecord } from "@/lib/feedback";
+import { Button } from "@/components/ui/button";
+import { GitFork } from "lucide-react";
 import type {
   SubAgent,
   ToolCall,
@@ -24,6 +29,25 @@ import {
 } from "@/app/utils/chart";
 import { cn } from "@/lib/utils";
 // NOTE  MC80OmFIVnBZMlhrdUp2bG43bmx2TG82TVRWSlVRPT06NGI5M2JjYjQ=
+
+/**
+ * 从文本中剥离图表 iframe 标签（完整 + 流式 partial），
+ * 避免消息正文中残留 iframe HTML 显示为乱码文本。
+ * 图表统一由 chartIframes 在工具卡片下方渲染，同一图表只显示一次。
+ */
+function stripIframeFromText(text: string): string {
+  if (!text) return text;
+  // 1) 剥离完整的 iframe 标签
+  let result = text.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '');
+  // 2) 剥离流式输出末尾不完整的 iframe 标签（<iframe ... 但尚无 </iframe>）
+  //    含 data:text/html;base64 的大段 HTML 属于图表 iframe，截断隐藏；
+  //    不含 base64 的短 <iframe 片段（如用户讨论文字）保留不动。
+  const partialMatch = result.match(/<iframe(?:(?!<\/iframe>)[\s\S])*$/i);
+  if (partialMatch && /data:text\/html/i.test(partialMatch[0])) {
+    result = result.slice(0, result.lastIndexOf('<iframe'));
+  }
+  return result.trim();
+}
 
 /** image_url block as sent to OpenAI-compatible APIs (e.g. Doubao) */
 interface ImageUrlBlock {
@@ -71,8 +95,24 @@ interface ChatMessageProps {
   stream?: any;
   onResumeInterrupt?: (value: any) => void;
   graphId?: string;
-  /** 附随图表 HTML（交互式 echarts iframe）。报告呈现消息的图表由同轮生成步骤附随而来。 */
-  chartAttachmentHtml?: string;
+  /** P1-1 消息反馈：当前会话 ID（反馈 API 需要） */
+  threadId?: string;
+  /** P1-1 消息反馈：该消息已有的反馈（回显图标态） */
+  feedback?: FeedbackRecord | null;
+  /** P1-1 消息反馈：当前选中库名（首次保存快照进 context） */
+  dbContext?: string;
+  /** P1-1 消息反馈：父级更新 feedbackMap 的回调 */
+  onFeedbackChange?: (messageId: string, feedback: FeedbackRecord | null) => void;
+  /** P1-5 会话分叉：从此消息分叉（复制截止到该消息的新会话并跳转） */
+  onFork?: (messageId: string) => void;
+  /** P1-5 会话分叉：正在分叉中（禁用按钮） */
+  forkBusy?: boolean;
+  /** Token 计量：该消息的首 token 耗时（TTFT, ms） */
+  ttftMs?: number;
+  /** Token 计量：该消息的总耗时（ms） */
+  durationMs?: number;
+  /** Token 计量：该轮 token 维度（后端 steps 按轮聚合） */
+  roundStat?: RoundStat;
 }
 
 function areToolCallsEqual(prevToolCalls: ToolCall[], nextToolCalls: ToolCall[]) {
@@ -112,7 +152,15 @@ export const ChatMessage = React.memo<ChatMessageProps>(
     stream,
     onResumeInterrupt,
     graphId,
-    chartAttachmentHtml,
+    threadId,
+    feedback,
+    dbContext,
+    onFeedbackChange,
+    onFork,
+    forkBusy,
+    ttftMs,
+    durationMs,
+    roundStat,
   }) => {
     const isUser = message.type === "human";
     const isAi = message.type === "ai";
@@ -120,6 +168,27 @@ export const ChatMessage = React.memo<ChatMessageProps>(
     const hasContent = messageContent && messageContent.trim() !== "";
     const hasToolCalls = toolCalls.length > 0;
     const isStreamingMessage = isAi && isStreaming === true;
+
+    // 图表 iframe 提取：优先从图表工具结果取（完整且可靠），仅无工具图表时回退消息正文。
+    // 流式输出时正文 iframe 可能不完整（base64 未结束），工具结果则始终完整。
+    const chartIframes = useMemo(() => {
+      if (!isAi) return [];
+      // 1) 优先：图表工具调用结果（完整 HTML，始终可用）
+      const toolIframes: string[] = [];
+      toolCalls.forEach((tc) => {
+        if (!tc.result || typeof tc.result !== "string") return;
+        const isChartTool = chartToolNames.some(
+          (n) => tc.name === n || (tc.name || "").includes(n)
+        );
+        if (!isChartTool) return;
+        toolIframes.push(...extractInteractiveChartIframes(tc.result));
+      });
+      if (toolIframes.length > 0) {
+        return toolIframes.filter((html, i) => toolIframes.indexOf(html) === i);
+      }
+      // 2) 回退：消息正文中的 iframe（无图表工具调用时）
+      return extractInteractiveChartIframes(messageContent);
+    }, [isAi, messageContent, toolCalls]);
 
     const subAgents = useMemo(
       () =>
@@ -178,7 +247,7 @@ export const ChatMessage = React.memo<ChatMessageProps>(
         <div className={cn("min-w-0 max-w-full", isUser ? "max-w-[70%]" : "w-full")}>
           {isUser ? (
             /* ── Human message: images + PDFs + text ── */
-            <div className="mt-4 flex flex-col items-end gap-2">
+            <div className="group mt-4 flex flex-col items-end gap-2">
               {hasAttachments && (
                 <div className="flex flex-wrap justify-end gap-2">
                   {/* Images: rendered from data URL directly */}
@@ -207,41 +276,33 @@ export const ChatMessage = React.memo<ChatMessageProps>(
                   </p>
                 </div>
               )}
+              {/* P1-5 从此处分叉：用户消息悬停显示（改写问题/改口径重新验证入口） */}
+              {!isStreamingMessage && message.id && threadId && onFork && (
+                <div className="flex justify-end opacity-0 transition-opacity group-hover:opacity-60 hover:opacity-100">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground"
+                    onClick={() => onFork(message.id!)}
+                    disabled={forkBusy || isLoading}
+                    aria-label="从此处分叉"
+                    title="从此处分叉：复制截止到这条消息的新会话，可改写问题重新验证"
+                  >
+                    <GitFork size={14} />
+                  </Button>
+                </div>
+              )}
             </div>
           ) : (
             /* ── AI message ── */
             (() => {
-                // 图表 iframe 过滤逻辑抽到 @/app/utils/chart（isInteractiveChartIframe 等）。
-                // 1) 从消息正文提取 <iframe>（图表场景）
-                const iframeRegex = /<iframe[^>]*>[^<]*<\/iframe>/g;
-                const bodyIframes = extractInteractiveChartIframes(messageContent);
-                // 2) 从工具调用结果中提取图表 iframe（图表引擎生成后存于 toolCalls[].result）
-                //    让图表直接渲染在消息正文，而不只是藏在工具卡片里
-                const toolIframes: string[] = [];
-                toolCalls.forEach((tc) => {
-                  if (!tc.result || typeof tc.result !== "string") return;
-                  const isChartTool = chartToolNames.some(
-                    (n) => tc.name === n || (tc.name || "").includes(n)
-                  );
-                  if (!isChartTool) return;
-                  toolIframes.push(...extractInteractiveChartIframes(tc.result));
-                });
-                const allIframes = [...bodyIframes, ...toolIframes];
-                // 去重：同一 iframe 可能在正文和 tool 结果里重复出现
-                const uniqueIframes = allIframes.filter(
-                  (html, i) => allIframes.indexOf(html) === i
-                );
-                const textContent = messageContent.replace(iframeRegex, '').trim();
+                // 从消息正文中剥离 iframe（完整 + 流式 partial），
+                // 图表由 chartIframes 在工具卡片下方统一渲染，同一图表只显示一次。
+                const textContent = stripIframeFromText(messageContent);
                 // 思考阶段（reasoning_content）：有则显示（后端开了思考才流过来，关了自然没有）
                 const reasoning = (message.additional_kwargs as Record<string, unknown>)?.reasoning_content;
                 return (
                   <>
-                    {chartAttachmentHtml && (
-                      <div className="my-4 w-full" dangerouslySetInnerHTML={{ __html: chartAttachmentHtml }} />
-                    )}
-                    {uniqueIframes.map((html, i) => (
-                      <div key={i} className="my-4 w-full" dangerouslySetInnerHTML={{ __html: html }} />
-                    ))}
                     {typeof reasoning === "string" &&
                       reasoning.trim() !== "" && (
                         <ThinkingBlock
@@ -259,6 +320,42 @@ export const ChatMessage = React.memo<ChatMessageProps>(
                         </div>
                       </div>
                     )}
+                    {/* 报告文件预览/下载：识别消息里的 /workspace/report/*.md 路径 */}
+                    {textContent && <ReportFileActions content={textContent} />}
+                    {/* P1-1 消息反馈：非流式、有正文、有 message.id 的 AI 消息才显示 */}
+                    {hasContent &&
+                      !isStreamingMessage &&
+                      message.id &&
+                      threadId &&
+                      onFeedbackChange && (
+                        <MessageFeedbackActions
+                          threadId={threadId}
+                          messageId={message.id}
+                          feedback={feedback}
+                          dbContext={dbContext}
+                          disabled={isLoading}
+                          onChange={onFeedbackChange}
+                          copyText={textContent}
+                          ttftMs={ttftMs}
+                          durationMs={durationMs}
+                          roundStat={roundStat}
+                          extraActions={
+                            onFork && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground"
+                                onClick={() => onFork(message.id!)}
+                                disabled={forkBusy || isLoading}
+                                aria-label="从此处分叉"
+                                title="从此处分叉：复制截止到这条消息的新会话"
+                              >
+                                <GitFork size={14} />
+                              </Button>
+                            )
+                          }
+                        />
+                      )}
                   </>
                 );
               })()
@@ -287,6 +384,14 @@ export const ChatMessage = React.memo<ChatMessageProps>(
                   />
                 );
               })}
+            </div>
+          )}
+          {/* 图表：渲染在工具卡片下方 */}
+          {chartIframes.length > 0 && (
+            <div className="mt-4 flex w-full flex-col gap-4">
+              {chartIframes.map((html, i) => (
+                <div key={i} className="w-full" dangerouslySetInnerHTML={{ __html: html }} />
+              ))}
             </div>
           )}
           {!isUser && subAgents.length > 0 && (
@@ -346,15 +451,32 @@ export const ChatMessage = React.memo<ChatMessageProps>(
       prevProps.onResumeInterrupt === nextProps.onResumeInterrupt &&
       prevProps.graphId === nextProps.graphId &&
       prevProps.isLoading === nextProps.isLoading &&
-      prevProps.isStreaming === nextProps.isStreaming &&
-      prevProps.chartAttachmentHtml === nextProps.chartAttachmentHtml;
+      prevProps.isStreaming === nextProps.isStreaming;
+
+    const isSameFeedback =
+      prevProps.threadId === nextProps.threadId &&
+      prevProps.feedback === nextProps.feedback &&
+      prevProps.dbContext === nextProps.dbContext &&
+      prevProps.onFeedbackChange === nextProps.onFeedbackChange;
+
+    const isSameFork =
+      prevProps.onFork === nextProps.onFork &&
+      prevProps.forkBusy === nextProps.forkBusy;
+
+    const isSameTiming =
+      prevProps.ttftMs === nextProps.ttftMs &&
+      prevProps.durationMs === nextProps.durationMs &&
+      prevProps.roundStat === nextProps.roundStat;
 
     return (
       isSameMessage &&
       isSameToolCalls &&
       isSameUi &&
       isSameInterruptMaps &&
-      isSameLastMessageState
+      isSameLastMessageState &&
+      isSameFeedback &&
+      isSameFork &&
+      isSameTiming
     );
   }
 );

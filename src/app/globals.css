@@ -17,11 +17,11 @@
 
   :root {
     /* App-specific color variables */
-    --color-primary: #1c3c3c;
+    --color-primary: #287977;
     --color-user-message: #076699;
     --color-user-message-bg: #e8f4f8;
     --color-avatar-bg: #e8ebeb;
-    --color-secondary: #1c3c3c;
+    --color-secondary: #287977;
     --color-success: #10b981;
     --color-warning: #f59e0b;
     --color-error: #ef4444;
@@ -115,7 +115,7 @@
     --card-foreground: 220 13% 13%;
     --popover: 0 0% 100%;
     --popover-foreground: 220 13% 13%;
-    --primary: 180 35% 17%;
+    --primary: 180 50% 32%;
     --primary-foreground: 0 0% 100%;
     --secondary: 220 13% 91%;
     --secondary-foreground: 220 13% 13%;
@@ -127,7 +127,7 @@
     --destructive-foreground: 0 0% 100%;
     --border: 220 13% 91%;
     --input: 220 13% 91%;
-    --ring: 180 35% 17%;
+    --ring: 180 50% 32%;
     --sidebar: 220 13% 95%;
     --chart-1: 12 76% 61%;
     --chart-2: 173 58% 39%;
@@ -392,4 +392,12 @@ button {
   font-weight: 600;
   text-decoration: line-through;
   text-decoration-color: #f85149;
+}
+
+/* 交互式图表 iframe（echarts data:text/html 自包含）放大显示：
+   后端默认高度约 440px 偏小，这里统一撑满宽度并抬高最小高度。
+   内部 #chart 为 100vh，会随 iframe 高度自适应填充。 */
+iframe[src^="data:text/html"] {
+  width: 100% !important;
+  min-height: min(720px, 75vh) !important;
 }

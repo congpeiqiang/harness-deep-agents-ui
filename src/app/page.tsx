@@ -5,18 +5,18 @@ import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { useQueryState } from "nuqs";
 import { getConfig, saveConfig, StandaloneConfig } from "@/lib/config";
 import { ConfigDialog } from "@/app/components/ConfigDialog";
+import { SettingsDialog } from "@/app/components/SettingsDialog";
 import { Button } from "@/components/ui/button";
 import { Assistant } from "@langchain/langgraph-sdk";
 import { ClientProvider, useClient } from "@/providers/ClientProvider";
-import { Settings, MessagesSquare, SquarePen } from "lucide-react";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+import { Settings, Download, MessageSquareWarning, FlaskConical } from "lucide-react";
+import Link from "next/link";
 import { ThreadList } from "@/app/components/ThreadList";
+import { WeintLogo } from "@/app/components/WeintLogo";
+import { SidebarRail } from "@/app/components/SidebarRail";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ChatInterface } from "@/app/components/ChatInterface";
+import { toast } from "sonner";
 
 interface HomePageInnerProps {
   config: StandaloneConfig;
@@ -34,10 +34,46 @@ function HomePageInner({
 }: HomePageInnerProps) {
   const client = useClient();
   const [threadId, setThreadId] = useQueryState("threadId");
-  const [sidebar, setSidebar] = useQueryState("sidebar");
+  // 侧边栏折叠态：false=展开（会话列表），true=折叠成窄栏（对标 deepseek harness rail）
+  const [collapsed, setCollapsed] = useState(false);
+  // 搜索输入框展开态 / 批量管理模式（跨窄栏与展开态共享，窄栏点击图标可唤起）
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [batchMode, setBatchMode] = useState(false);
+
+  // 根治死线程 404：URL 带 threadId 时先探活再渲染。线程已不存在（后端重启/inmem
+  // 注册表丢失）→ 自动清 threadId 开新会话，杜绝 useStreamThread 对死线程无限重连
+  // 刷 unhandledRejection。threadChecked 仅首挂载门控一次，后续切换会话不再探。
+  const [threadChecked, setThreadChecked] = useState(false);
+  useEffect(() => {
+    if (threadChecked) return;
+    if (!threadId) {
+      setThreadChecked(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const base = (config.deploymentUrl || "http://localhost:2026").replace(/\/+$/, "");
+        const res = await fetch(
+          `${base}/threads/${encodeURIComponent(threadId)}/state`
+        );
+        if (cancelled) return;
+        if (res.status === 404) {
+          toast.warning("该会话已失效（后端可能已重启），已为你开启新会话");
+          setThreadId(null);
+        }
+      } catch {
+        // 网络错误（后端暂时不可达）：不清理，按原样渲染，由 chat 自身报错
+      } finally {
+        if (!cancelled) setThreadChecked(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [threadChecked, threadId, setThreadId, config.deploymentUrl]);
 
   const [mutateThreads, setMutateThreads] = useState<(() => void) | null>(null);
-  const [interruptCount, setInterruptCount] = useState(0);
   const [assistant, setAssistant] = useState<Assistant | null>(null);
 
   const fetchAssistant = useCallback(async () => {
@@ -106,38 +142,47 @@ function HomePageInner({
 
   return (
     <>
-      <ConfigDialog
+      <SettingsDialog
         open={configDialogOpen}
         onOpenChange={setConfigDialogOpen}
-        onSave={handleSaveConfig}
-        initialConfig={config}
+        config={config}
+        onSaveConfig={handleSaveConfig}
       />
       <div className="flex h-screen flex-col">
         <header className="flex h-16 items-center justify-between border-b border-border px-6">
-          <div className="flex items-center gap-4">
-            <h1 className="text-xl font-semibold">私人对话平台</h1>
-            {!sidebar && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setSidebar("1")}
-                className="rounded-md border border-border bg-card p-3 text-foreground hover:bg-accent"
-              >
-                <MessagesSquare className="mr-2 h-4 w-4" />
-                对话列表
-                {interruptCount > 0 && (
-                  <span className="ml-2 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] text-destructive-foreground">
-                    {interruptCount}
-                  </span>
-                )}
-              </Button>
-            )}
+          <div className="flex items-center gap-2.5">
+            <WeintLogo size={24} />
+            <span className="text-xl font-semibold tracking-tight">weint</span>
+            <span className="inline-flex items-center rounded-[4px] bg-foreground px-1.5 py-[3px] text-[10px] font-semibold uppercase leading-none tracking-[0.05em] text-background">
+              HARNESS
+            </span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="text-sm text-muted-foreground">
-              <span className="font-medium">助手:</span>{" "}
-              {config.assistantId}
-            </div>
+            <Link href="/experiment">
+              <Button variant="outline" size="sm">
+                <FlaskConical className="mr-2 h-4 w-4" />
+                离线测试
+              </Button>
+            </Link>
+            <Link href="/feedback/annotate">
+              <Button variant="outline" size="sm">
+                <MessageSquareWarning className="mr-2 h-4 w-4" />
+                待标注
+              </Button>
+            </Link>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!threadId}
+              title={threadId ? "下载当前会话日志（JSON）" : "请先开启一个会话"}
+              onClick={() => {
+                if (!threadId) return;
+                window.location.href = `${config.deploymentUrl}/api/threads/${threadId}/export?format=json`;
+              }}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              下载会话日志
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -146,59 +191,59 @@ function HomePageInner({
               <Settings className="mr-2 h-4 w-4" />
               设置
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setThreadId(null)}
-              disabled={!threadId}
-              className="border-[#2F6868] bg-[#2F6868] text-white hover:bg-[#2F6868]/80"
-            >
-              <SquarePen className="mr-2 h-4 w-4" />
-              新建对话
-            </Button>
           </div>
         </header>
 
-        <div className="flex-1 overflow-hidden">
-          <ResizablePanelGroup
-            direction="horizontal"
-            autoSaveId="standalone-chat"
+        <div className="flex flex-1 overflow-hidden">
+          {/* 侧边栏：展开=会话列表，折叠=窄栏（对标 deepseek harness rail） */}
+          <aside
+            className={`relative flex-shrink-0 overflow-hidden border-r border-border bg-muted transition-[width] duration-200 ${
+              collapsed ? "w-14" : "w-72"
+            }`}
           >
-            {sidebar && (
-              <>
-                <ResizablePanel
-                  id="thread-history"
-                  order={1}
-                  defaultSize={25}
-                  minSize={20}
-                  className="relative min-w-[380px]"
-                >
-                  <ThreadList
-                    onThreadSelect={async (id) => {
-                      await setThreadId(id);
-                    }}
-                    onMutateReady={(fn) => setMutateThreads(() => fn)}
-                    onClose={() => setSidebar(null)}
-                    onInterruptCountChange={setInterruptCount}
-                  />
-                </ResizablePanel>
-                <ResizableHandle />
-              </>
+            {collapsed ? (
+              <SidebarRail
+                onExpand={() => setCollapsed(false)}
+                onNewSession={() => setThreadId(null)}
+                onSearch={() => {
+                  setCollapsed(false);
+                  setSearchOpen(true);
+                }}
+                onBatch={() => {
+                  setCollapsed(false);
+                  setBatchMode(true);
+                }}
+                onSettings={() => setConfigDialogOpen(true)}
+              />
+            ) : (
+              <ThreadList
+                onThreadSelect={async (id) => {
+                  await setThreadId(id);
+                }}
+                onMutateReady={(fn) => setMutateThreads(() => fn)}
+                onClose={() => setCollapsed(true)}
+                searchOpen={searchOpen}
+                onSearchOpenChange={setSearchOpen}
+                batchMode={batchMode}
+                onBatchModeChange={setBatchMode}
+              />
             )}
+          </aside>
 
-            <ResizablePanel
-              id="chat"
-              className="relative flex flex-col"
-              order={2}
-            >
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            {!threadChecked && threadId ? (
+              <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                校验会话…
+              </div>
+            ) : (
               <ChatProvider
                 activeAssistant={assistant}
                 onHistoryRevalidate={() => mutateThreads?.()}
               >
                 <ChatInterface assistant={assistant} />
               </ChatProvider>
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            )}
+          </div>
         </div>
       </div>
     </>

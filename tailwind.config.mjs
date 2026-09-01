@@ -87,69 +87,25 @@ export default {
       boxShadow: {
         xs: "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
       },
+      // NOTE: these tokens map to variables defined in src/app/globals.css
+      // (shadcn `--primary`/`--secondary`/`--foreground`/`--muted-foreground` + app
+      // `--color-*` equivalents). The old joy-UI `var(--bg-*)`/`var(--text-*)`/
+      // `var(--border-*)` names were never defined, so `bg-primary`/`text-primary`/
+      // `border-primary` etc. resolved to transparent/inherited.
       backgroundColor: {
-        primary: "var(--bg-primary)",
-        "primary-hover": "var(--bg-primary_hover)",
-        secondary: "var(--bg-secondary)",
-        "secondary-hover": "var(--bg-secondary_hover)",
-        tertiary: "var(--bg-tertiary)",
-        quaternary: "var(--bg-quaternary)",
-
-        "brand-primary": "var(--bg-brand-primary)",
-        "brand-primary-hover": "var(--bg-brand-primary_hover)",
-        "brand-secondary": "var(--bg-brand-secondary)",
-        "brand-tertiary": "var(--bg-brand-tertiary)",
-        purple: "var(--bg-purple)",
-
-        "success-primary": "var(--bg-success-primary)",
-        "success-secondary": "var(--bg-success-secondary)",
-        "success-strong": "var(--bg-success-strong)",
-        "error-primary": "var(--bg-error-primary)",
-        "error-secondary": "var(--bg-error-secondary)",
-        "error-strong": "var(--bg-error-strong)",
-        "error-strong-hover": "var(--bg-error-strong-hover)",
-        "warning-primary": "var(--bg-warning-primary)",
-        "warning-secondary": "var(--bg-warning-secondary)",
-        "warning-strong": "var(--bg-warning-strong)",
+        primary: "hsl(var(--primary))",
+        secondary: "hsl(var(--secondary))",
       },
       borderColor: {
-        primary: "var(--border-primary)",
-        secondary: "var(--border-secondary)",
-        tertiary: "var(--border-tertiary)",
-        error: "var(--border-error)",
-        "error-strong": "var(--border-error-strong)",
-        brand: "var(--border-brand)",
-        "brand-strong": "var(--border-brand-strong)",
-        "brand-subtle": "var(--border-brand-subtle)",
-        strong: "var(--border-strong)",
-        warning: "var(--border-warning)",
-        success: "var(--border-success)",
-        purple: "var(--border-purple)",
-        "status-green": "var(--border-status-green)",
-        "status-orange": "var(--border-status-orange)",
-        "status-yellow": "var(--border-status-yellow)",
-        "status-red": "var(--border-status-red)",
+        primary: "hsl(var(--primary))",
+        secondary: "hsl(var(--secondary))",
       },
       textColor: {
-        primary: "var(--text-primary)",
-        secondary: "var(--text-secondary)",
-        tertiary: "var(--text-tertiary)",
-        quaternary: "var(--text-quaternary)",
-        disabled: "var(--text-disabled)",
-        error: "var(--text-error)",
-        warning: "var(--text-warning)",
-        success: "var(--text-success)",
-        placeholder: "var(--text-placeholder)",
-        purple: "var(--text-purple)",
-        "brand-primary": "var(--text-brand-primary)",
-        "brand-secondary": "var(--text-brand-secondary)",
-        "brand-tertiary": "var(--text-brand-tertiary)",
-        "brand-disabled": "var(--text-brand-disabled)",
-        "status-green": "var(--text-status-green)",
-        "status-orange": "var(--text-status-orange)",
-        "status-yellow": "var(--text-status-yellow)",
-        "status-red": "var(--text-status-red)",
-        "button-primary": "var(--text-button-primary)",
+        primary: "hsl(var(--foreground))",
+        secondary: "hsl(var(--muted-foreground))",
+        tertiary: "hsl(218 11% 65%)", // #9ca3af (app --color-text-tertiary)
+        warning: "hsl(38 92% 50%)", // #f59e0b (app --color-warning)
+        success: "hsl(160 84% 39%)", // #10b981 (app --color-success)
       },
       colors: {
         border: "hsl(var(--border))",

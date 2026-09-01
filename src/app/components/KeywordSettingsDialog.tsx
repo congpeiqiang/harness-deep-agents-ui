@@ -43,14 +43,18 @@ export function KeywordSettingsDialog({
 }: KeywordSettingsDialogProps) {
   const [keywordsText, setKeywordsText] = useState("");
   const [enableThinking, setEnableThinking] = useState(true);
+  // P1-3 SQL 执行审批：true=ask（写/DDL/全表拉取弹审批卡），false=never（全放行）
+  const [sqlApprovalAsk, setSqlApprovalAsk] = useState(true);
 
   useEffect(() => {
     if (open) {
       setKeywordsText(getQueryKeywords().join(", "));
       try {
         setEnableThinking(getConfig()?.enableThinking ?? true);
+        setSqlApprovalAsk(getConfig()?.sqlApprovalPolicy !== "never");
       } catch {
         setEnableThinking(true);
+        setSqlApprovalAsk(true);
       }
     }
   }, [open]);
@@ -68,6 +72,7 @@ export function KeywordSettingsDialog({
         ...config,
         queryKeywords: parsed.length > 0 ? parsed : undefined,
         enableThinking,
+        sqlApprovalPolicy: sqlApprovalAsk ? "ask" : "never",
       });
     }
     onOpenChange(false);
@@ -79,7 +84,7 @@ export function KeywordSettingsDialog({
         <DialogHeader>
           <DialogTitle>对话设置</DialogTitle>
           <DialogDescription>
-            配置数据查询关键词与 AI 回复的"深度思考"显示。
+            配置数据查询关键词、AI 回复的"深度思考"显示与 SQL 执行审批。
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
@@ -109,6 +114,20 @@ export function KeywordSettingsDialog({
               id="enableThinking"
               checked={enableThinking}
               onCheckedChange={setEnableThinking}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4 border-t border-border pt-4">
+            <div className="grid gap-1">
+              <Label htmlFor="sqlApproval">SQL 写操作执行审批</Label>
+              <p className="text-xs text-muted-foreground">
+                开启：子智能体执行写/DDL 或疑似全表拉取的 SQL 前弹出审批卡，
+                需您批准；只读查询不受影响。关闭：所有 SQL 直接执行（请谨慎）。
+              </p>
+            </div>
+            <Switch
+              id="sqlApproval"
+              checked={sqlApprovalAsk}
+              onCheckedChange={setSqlApprovalAsk}
             />
           </div>
         </div>

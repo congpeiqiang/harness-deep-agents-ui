@@ -15,7 +15,7 @@ import type { TodoItem, QueryTask } from "@/app/types/types";
 import { useClient } from "@/providers/ClientProvider";
 import { useQueryState } from "nuqs";
 import { ContentBlock } from "@langchain/core/messages";
-import { getQueryKeywords, getConfig, getEnableThinking } from "@/lib/config";
+import { getQueryKeywords, getConfig, getEnableThinking, getSqlApprovalPolicy } from "@/lib/config";
 // FIXME  MS80OmFIVnBZMlhrdUp2bG43bmx2TG82YlU1amRRPT06N2RjMGNjZmI=
 
 // ── 从子线程消息推导查询步骤（write_todos 未调用时的兜底）──
@@ -146,7 +146,38 @@ export type StateType = {
   subagent_steps_map?: Record<string, TodoItem[]>;
   active_queries?: Record<string, boolean>;
   async_tasks?: Record<string, any>;
+  // Token 计量（累积型）
+  token_stats?: {
+    total_llm_ms: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_cache_read_tokens: number;
+    total_reasoning_tokens: number;
+    step_count: number;
+    steps: Array<{
+      total_llm_ms: number;
+      total_input_tokens: number;
+      total_output_tokens: number;
+      total_cache_read_tokens: number;
+      total_reasoning_tokens: number;
+      round_index?: number;
+    }>;
+  };
 };
+
+// P1-7：async_tasks 终态集合（对齐后端 deepagents _TERMINAL_STATUSES）。
+// busy 判定用：终态任务不再驱动 1s 轮询。注意 auto-continue 仍只对
+// success/error 触发——cancelled 是用户主动取消，不得自动续跑。
+const TERMINAL_TASK_STATUSES = new Set([
+  "success",
+  "error",
+  "cancelled",
+  "timeout",
+  "interrupted",
+]);
+
+// auto-continue 只对 success 触发，error/cancelled/timeout/interrupted 不自动续跑
+const AUTO_CONTINUE_STATUSES = new Set(["success"]);
 // eslint-disable  Mi80OmFIVnBZMlhrdUp2bG43bmx2TG82YlU1amRRPT06N2RjMGNjZmI=
 
 export function useChat({
@@ -245,8 +276,9 @@ export function useChat({
       return;
     }
     let active = true;
-    // C 方案（按需轮询）：活跃（有 run / 运行中子任务）时 2s 轮询，空闲时降为 10s，
+    // C 方案（按需轮询）：活跃（有 run / 运行中子任务）时 1s 轮询，空闲时降为 10s，
     // 减少空转 getState 与对 checkpoint 的读写竞争。
+    // 调整为 1s：匹配后端 sync 的 0.5s 写入周期，降低进度更新延迟。
     let timer: ReturnType<typeof setTimeout> | undefined;
     let busy = false;
     const poll = async () => {
@@ -290,18 +322,33 @@ export function useChat({
             })) ||
           (activeQueriesLocal && typeof activeQueriesLocal === "object" &&
             Object.values(activeQueriesLocal).some((v) => v === true));
-        busy = stream.isLoading || subTaskRunning;
+        // 经 streamRef 读最新 isLoading：effect deps 不含 stream，直接引用会冻结为挂载时快照
+        busy = streamRef.current.isLoading || subTaskRunning;
         if (asyncTasks && typeof asyncTasks === "object" && busy) {
           const taskEntries = Object.entries(asyncTasks) as [string, any][];
           const todoMap: Record<string, TodoItem[]> = {};
           // 从子线程提取标题（task_id → 标题），不受主线程消息压缩影响
           const subTitleMap: Record<string, string> = {};
+          // 后端 sync 已写入的 steps_map（优先用当前值，丢失时用缓存）
+          const stepsMap = values?.subagent_steps_map ?? cachedSubagentStepsMapRef.current ?? {};
           // 轮询所有任务的子线程 todos（作为步骤进度兜底）+ 标题。
           // 不按 slice 截断——否则并发任务多时靠后的任务拿不到兜底进度，
           // 若 steps_map 又因竞态缺失会显示"初始化"。最多轮询 10 个防滥用。
+          // 优化：后端 sync 已将进度写入 subagent_steps_map 时，跳过子线程 getState，
+          // 减少 checkpoint 读竞争和网络开销。标题从 query_headers 兜底。
           const activeTasks = taskEntries.slice(0, 10);
           await Promise.all(
             activeTasks.map(async ([taskId]) => {
+              // 后端 sync 已写入此任务的步骤进度 → 跳过子线程 getState 兜底
+              const hasStepsMap = stepsMap[taskId] && Array.isArray(stepsMap[taskId]) && stepsMap[taskId].length > 0;
+              if (hasStepsMap) {
+                // 标题从 query_headers 兜底（taskTitleMap 已有主线程提取的标题）
+                const qh = values?.query_headers?.[taskId];
+                if (qh?.content && !subTitleMap[taskId]) {
+                  subTitleMap[taskId] = cleanTaskTitle(qh.content);
+                }
+                return;
+              }
               try {
                 const subState = await pollClient.threads.getState(taskId);
                 const subValues = (subState?.values as any) || {};
@@ -409,7 +456,7 @@ export function useChat({
         // ignore
       }
       if (active) {
-        timer = setTimeout(poll, busy ? 2000 : 10000);
+        timer = setTimeout(poll, busy ? 1000 : 10000);
       }
     };
     poll();
@@ -483,11 +530,13 @@ export function useChat({
           }
         }
         // C 方案（按需轮询）：计算是否仍有待处理工作，供调度方决定下一轮间隔。
+        // P1-7：cancelled/timeout/interrupted 也是终态，不计入「运行中」，
+        // 否则被取消的任务会让 1s 轮询永不降频。
         const hasRunningSubtask =
           (asyncTasks && typeof asyncTasks === "object" &&
             Object.values(asyncTasks).some((t: any) => {
               const st = t?.status;
-              return st !== "success" && st !== "error";
+              return !TERMINAL_TASK_STATUSES.has(st);
             })) ||
           (activeQueries && typeof activeQueries === "object" &&
             Object.values(activeQueries).some((v) => v === true));
@@ -496,7 +545,7 @@ export function useChat({
             ? Object.entries(asyncTasks).some(([, t]: [string, any]) => {
                 const st = t?.status;
                 return (
-                  (st === "success" || st === "error") &&
+                  AUTO_CONTINUE_STATUSES.has(st) &&
                   !continuedTaskIdsRef.current.has(t?.task_id || t?.thread_id || "")
                 );
               })
@@ -520,11 +569,11 @@ export function useChat({
         // 等主线程空闲（isLoading 复位）后再由本循环补触发。
         if (streamRef.current.isLoading && !currentContinueTaskKeyRef.current) return loopBusy;
 
-        // 找出「最旧的终止任务」（success/error，未 continue 过的）
+        // 找出「最旧的终止任务」（仅 success，未 continue 过的）
         const terminalTasks = Object.entries(asyncTasks)
           .filter(([, t]: [string, any]) => {
             const st = t?.status;
-            return (st === "success" || st === "error") && !continuedTaskIdsRef.current.has(t?.task_id || t?.thread_id || "");
+            return AUTO_CONTINUE_STATUSES.has(st) && !continuedTaskIdsRef.current.has(t?.task_id || t?.thread_id || "");
           })
           .sort((a, b) => {
             const aT = a[1] as any;
@@ -694,6 +743,8 @@ export function useChat({
               query_keywords: getQueryKeywords(),
               // 开启思考：后端 ThinkingToggleMiddleware 按此值每次模型调用重建模型
               enable_thinking: String(getEnableThinking()),
+              // SQL 审批策略（P1-3）：ask=写/DDL/全表拉取弹审批卡；never=全放行
+              sql_approval_policy: getSqlApprovalPolicy(),
             },
             recursion_limit: 500,
           },
@@ -958,12 +1009,16 @@ export function useChat({
 
   return {
     stream,
+    threadId,
     todos: (polledTodos && polledTodos.length > 0)
       ? polledTodos
       : (stream.values.todos ?? []),
     queryHeader: polledQueryHeader ?? stream.values.query_header ?? null,
     subagentSteps: effectiveSubagentSteps,
     queryTasks,
+    // P1-3：原始 async_tasks 轮询值（含 awaiting_approval 审批 payload），
+    // 供 ChatInterface 渲染 SQL 审批卡。queryTasks 类型受限不含该字段。
+    asyncTasks: polledAsyncTasks,
     runningQueryCount,
     queryInProgress,
     files: stream.values.files ?? {},
@@ -982,6 +1037,8 @@ export function useChat({
     markCurrentThreadAsResolved,
     resumeInterrupt,
     currentContinueTaskKeyRef,
+    // Token 计量（来自后端 state.token_stats）
+    tokenStats: stream.values.token_stats,
   };
 }
 // TODO  My80OmFIVnBZMlhrdUp2bG43bmx2TG82YlU1amRRPT06N2RjMGNjZmI=

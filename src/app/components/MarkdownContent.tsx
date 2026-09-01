@@ -530,6 +530,46 @@ const markdownComponents = {
   },
 };
 
+// 报告/文件正文里内嵌的原始交互式图表 iframe（<iframe src="data:text/html;base64,...">）：
+// 切分后原位置渲染，保证报告附录图表出现在对应小节下（预览/下载报告用）。
+// 聊天正文已由 ChatMessage.stripIframeFromText 预先剥离 iframe，不会走到这里。
+const IFRAME_TAG_RE = /(<iframe[\s\S]*?<\/iframe>|<iframe[^>]*?\/>)/gi;
+
+function MarkdownWithIframes({ content }: { content: string }) {
+  const parts = useMemo(
+    () =>
+      content.split(IFRAME_TAG_RE).map((seg) => {
+        const isIframe = /^<iframe/i.test(seg.trim());
+        return isIframe
+          ? { type: "iframe" as const, html: seg }
+          : { type: "md" as const, content: seg };
+      }),
+    [content]
+  );
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.type === "iframe" ? (
+          <div
+            key={`iframe-${i}`}
+            className="my-4 w-full"
+            dangerouslySetInnerHTML={{ __html: part.html }}
+          />
+        ) : (
+          <ReactMarkdown
+            key={`md-${i}`}
+            remarkPlugins={[remarkGfm]}
+            components={markdownComponents}
+          >
+            {part.content}
+          </ReactMarkdown>
+        )
+      )}
+    </>
+  );
+}
+
 export const MarkdownContent = React.memo<MarkdownContentProps>(
   ({ content, className = "", streaming = false }) => {
     const containerClassName = useMemo(
@@ -551,9 +591,13 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
 
     return (
       <div className={containerClassName}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-          {content}
-        </ReactMarkdown>
+        {content.includes("<iframe") ? (
+          <MarkdownWithIframes content={content} />
+        ) : (
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {content}
+          </ReactMarkdown>
+        )}
       </div>
     );
   }

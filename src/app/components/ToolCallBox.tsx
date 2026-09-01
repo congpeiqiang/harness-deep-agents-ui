@@ -18,10 +18,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ToolCall, ActionRequest, ReviewConfig } from "@/app/types/types";
-import { extractInteractiveChartIframes } from "@/app/utils/chart";
+import { extractInteractiveChartIframes, chartToolNames } from "@/app/utils/chart";
 import { cn } from "@/lib/utils";
 import { LoadExternalComponent } from "@langchain/langgraph-sdk/react-ui";
 import { ToolApprovalInterrupt } from "@/app/components/ToolApprovalInterrupt";
+import { SqlResultBlock, parseSqlResult } from "@/app/components/SqlResultBlock";
 // eslint-disable  MC80OmFIVnBZMlhrdUp2bG43bmx2TG82VG0xMlNnPT06MzgwNDRmZDg=
 
 interface ArgItemProps {
@@ -123,7 +124,6 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
     );
 
     const deferredResult = useDeferredValue(result);
-  if (typeof result === "string" && result.includes("<iframe")) console.log("[ToolCallBox] result is iframe:", result.substring(0, 100));
 
     const serializedResult = useMemo(() => {
       if (!deferredResult) return "";
@@ -136,6 +136,12 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
         return String(deferredResult);
       }
     }, [deferredResult]);
+
+    // P1-2：SQL 结果分类判定（表格卡/错误卡）。null = 无法分类 → 回退原 <pre>。
+    const sqlParsed = useMemo(
+      () => parseSqlResult(name, serializedResult, status),
+      [name, serializedResult, status]
+    );
 
     const toggleExpanded = useCallback(() => {
       setIsExpanded((prev) => !prev);
@@ -249,7 +255,7 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
                 {argsKeys.length > 0 && (
                   <div className="mt-4">
                     <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      参数
+                      输入 IN
                     </h4>
                     <div className="space-y-2">
                       {argsEntries.map(([key, value]) => (
@@ -289,10 +295,22 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
                 {result && (
                   <div className="mt-4">
                     <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      结果
+                      输出 OUT
                     </h4>
                     {(() => {
-                      // 只渲染「交互式」图表 iframe（含 echarts.init / CDN），
+                      // 图表工具：跳过 iframe 渲染，由 ChatMessage 在消息体统一展示，
+                      // 避免同一图表在工具卡片 + 消息体重复出现。
+                      const isChartTool = chartToolNames.some(
+                        (n) => name === n || (name || "").includes(n)
+                      );
+                      if (isChartTool) {
+                        return (
+                          <div className="text-xs text-muted-foreground italic">
+                            图表已渲染在消息中 ↑
+                          </div>
+                        );
+                      }
+                      // 非图表工具：只渲染「交互式」iframe（含 echarts.init / CDN），
                       // 丢弃静态 SVG iframe，避免同一图表出现可交互+静态两份。
                       if (typeof serializedResult === "string" && serializedResult.includes("<iframe")) {
                         const interactive = extractInteractiveChartIframes(serializedResult);
@@ -302,6 +320,16 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
                           );
                         }
                         // 无交互式 iframe（可能是静态 SVG）→ 回退到文本展示
+                      }
+                      // P1-2：SQL 结果分类渲染（表格卡/错误卡）；无法分类回退原 pre
+                      if (sqlParsed) {
+                        return (
+                          <SqlResultBlock
+                            toolName={name}
+                            result={serializedResult}
+                            status={status}
+                          />
+                        );
                       }
                       return (
                         <div className="max-h-96 overflow-y-auto rounded-sm border border-border bg-muted/40">
