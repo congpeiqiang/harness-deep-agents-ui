@@ -15,6 +15,7 @@ import {
   Square,
   ArrowUp,
   CheckCircle,
+  AlertCircle,
   FileIcon,
   Plus,
   Loader2,
@@ -61,6 +62,14 @@ import { SubAgentProgressCard } from "@/app/components/SubAgentProgressCard";
 interface ChatInterfaceProps {
   assistant: Assistant | null;
 }
+
+// ── 方案3：子任务终态失败但方案1未自动汇报 → 聊天流兜底占位（双保险）──
+// 与后端 sync watcher 的 方案1 自动汇报范围对齐（error/timeout/cancelled）：
+// interrupted（HITL 审批暂停）非失败终态，不兜底。
+const FAIL_TERMINAL_STATUSES = new Set(["error", "timeout", "cancelled", "failed"]);
+// 宽限期须大于方案1 最坏等主线程空闲的 30s（sync 忙则跳过不汇报），
+// 否则方案1 汇报消息到达前占位已渲染 → 与 AI 汇报重复。
+const FAIL_FALLBACK_GRACE_MS = 35000;
 // eslint-disable  MS80OmFIVnBZMlhrdUp2bG43bmx2TG82VVVSdWNnPT06YjFiOWU4MzE=
 
 export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
@@ -218,6 +227,52 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   // resolvedApprovals：已提交决策的任务（乐观隐藏卡片，等轮询清除 awaiting_approval）
   const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set());
   const [approvingTaskIds, setApprovingTaskIds] = useState<Set<string>>(new Set());
+
+  // ── 方案3：子任务终态失败兜底占位 ──
+  // 任务进入 error/timeout/cancelled 终态且 方案1（sync watcher 自动汇报）未触发时，
+  // 宽限期后往聊天流渲染「任务执行失败」占位（双保险：侧边栏已显示 ✕ + error 详情，
+  // 聊天区若一直无 AI 说明，则前端兜底提示）。
+  const [failedFallbackTasks, setFailedFallbackTasks] = useState<Set<string>>(new Set());
+  const failedFallbackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // 定时器回调里读最新 async_tasks（effect 闭包里的 asyncTasks 会过期）
+  const asyncTasksRef = useRef<Record<string, any>>({});
+  asyncTasksRef.current = (asyncTasks as Record<string, any>) ?? {};
+
+  useEffect(() => {
+    if (!asyncTasks || typeof asyncTasks !== "object") return;
+    for (const [key, t] of Object.entries(asyncTasks as Record<string, any>)) {
+      const taskId = t?.task_id || t?.thread_id || key;
+      const status = t?.status;
+      if (typeof taskId !== "string" || !taskId) continue;
+      if (!FAIL_TERMINAL_STATUSES.has(status)) continue;        // 非失败终态
+      if (failedFallbackTasks.has(taskId)) continue;            // 已渲染占位
+      if (t?.failure_reported) continue;                        // 方案1已触发自动汇报
+      if (failedFallbackTimersRef.current.has(taskId)) continue; // 已排程
+      const timer = setTimeout(() => {
+        failedFallbackTimersRef.current.delete(taskId);
+        const latestT = asyncTasksRef.current[taskId] ?? asyncTasksRef.current[key];
+        // 宽限期内方案1已上报 / 任务不再处于失败终态 → 不兜底
+        if (latestT?.failure_reported || !FAIL_TERMINAL_STATUSES.has(latestT?.status ?? status)) {
+          return;
+        }
+        setFailedFallbackTasks((prev) => {
+          const next = new Set(prev);
+          next.add(taskId);
+          return next;
+        });
+      }, FAIL_FALLBACK_GRACE_MS);
+      failedFallbackTimersRef.current.set(taskId, timer);
+    }
+  }, [asyncTasks, failedFallbackTasks]);
+
+  // 卸载清理未触发的兜底定时器
+  useEffect(() => {
+    const timers = failedFallbackTimersRef.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
 
   const pendingApprovals = useMemo(() => {
     if (!asyncTasks || typeof asyncTasks !== "object") return [];
@@ -959,6 +1014,42 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                   />
                 );
               })}
+
+              {/* 方案3：子任务终态失败但方案1未自动汇报 → 聊天流兜底失败占位（双保险） */}
+              {failedFallbackTasks.size > 0 && (
+                <div className="flex flex-col gap-2 pt-2">
+                  {Array.from(failedFallbackTasks).map((taskId) => {
+                    const t = (asyncTasks as Record<string, any>)?.[taskId];
+                    const title =
+                      queryTasks.find((q) => q.task_id === taskId)?.title ||
+                      t?.description ||
+                      "子任务";
+                    const err = typeof t?.error === "string" ? t.error : "";
+                    const isCancelled = t?.status === "cancelled";
+                    return (
+                      <div
+                        key={`fail-fallback-${taskId}`}
+                        className="flex flex-col gap-1 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm"
+                      >
+                        <div className="flex items-center gap-2 text-destructive">
+                          <AlertCircle size={15} className="shrink-0" />
+                          <span className="font-medium">
+                            子任务「{title}」{isCancelled ? "已被取消" : "执行失败"}
+                          </span>
+                        </div>
+                        {err && (
+                          <div className="break-words pl-6 text-xs text-muted-foreground">
+                            {err}
+                          </div>
+                        )}
+                        <div className="pl-6 text-xs text-muted-foreground">
+                          若上方 AI 未说明原因，可重试该查询或在侧边栏查看任务详情。
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
         </div>
