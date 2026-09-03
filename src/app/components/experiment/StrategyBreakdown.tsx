@@ -1,90 +1,103 @@
 "use client";
 
-// 策略分层明细：每臂 × 策略（A/B/C/none）条数 + 各维均值。
+// 策略分层表：rows = 臂，cols = 出现的策略（A/B/C/none + 未知，序稳定）。
+// 每格 = 该臂该策略子集的真实统计：N 条 + 各评估维度的子集均值（scoreTone 上色）；
+// 空子集 → —。修旧结构（列=策略条数、得分列却=整臂均值的误导口径）。
+import { SCORE_DIMS, type RunDetail } from "@/lib/experiment";
+import { cn } from "@/lib/utils";
 import {
-  SCORE_DIMS,
-  dimValue,
-  type ExperimentRecord,
-  type RunDetail,
-} from "@/lib/experiment";
-
-const STRATEGY_LABEL: Record<string, string> = {
-  A: "策略A（语义库）",
-  B: "策略B（直连）",
-  C: "策略C（经验）",
-  none: "未分层",
-};
-
-function avg(nums: (number | null)[]): number | null {
-  const valid = nums.filter((n): n is number => n !== null);
-  if (valid.length === 0) return null;
-  return valid.reduce((a, b) => a + b, 0) / valid.length;
-}
-
-function mean(recs: ExperimentRecord[], key: string): number | null {
-  return avg(recs.map((r) => dimValue(r, key)));
-}
+  collectStrategies,
+  scoreText,
+  scoreTone,
+  strategyLabel,
+  strategySubsetStats,
+} from "@/lib/experimentStats";
 
 export default function StrategyBreakdown({ detail }: { detail: RunDetail }) {
   const items = detail.items ?? {};
   const arms = detail.arms ?? [];
   if (arms.length === 0) return null;
 
-  // 收集全部出现的策略值
-  const strategies = new Set<string>();
-  for (const recs of Object.values(items)) {
-    for (const r of recs) strategies.add(r.strategy || "none");
-  }
-  const stratKeys = ["A", "B", "C", "none"].filter((s) => strategies.has(s));
-  if (stratKeys.length === 0) return null;
+  const strategies = collectStrategies(items);
+  if (strategies.length === 0) return null;
+
+  const hasData = arms.some((a) => (items[a.name] ?? []).length > 0);
+  if (!hasData) return null;
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-sm">
-      <table className="w-full text-left text-xs">
-        <thead className="border-b border-border bg-muted">
-          <tr>
-            <th className="px-3 py-2 font-medium">臂</th>
-            {stratKeys.map((s) => (
-              <th key={s} className="px-3 py-2 text-right font-medium">
-                {STRATEGY_LABEL[s] ?? s}（条数）
-              </th>
-            ))}
-            {SCORE_DIMS.map((d) => (
-              <th key={d.key} className="px-3 py-2 text-right font-medium">
-                {d.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {arms.map((arm) => {
-            const recs = items[arm.name] ?? [];
-            const byStrat = new Map<string, number>();
-            for (const r of recs) {
-              const k = r.strategy || "none";
-              byStrat.set(k, (byStrat.get(k) ?? 0) + 1);
-            }
-            return (
-              <tr key={arm.name} className="border-t border-border/60">
-                <td className="px-3 py-1.5 font-medium">{arm.name}</td>
-                {stratKeys.map((s) => (
-                  <td key={s} className="px-3 py-1.5 text-right font-mono">
-                    {byStrat.get(s) ?? 0}
+    <div className="rounded-lg border border-border bg-card shadow-sm">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead className="border-b border-border bg-muted">
+            <tr>
+              <th className="px-3 py-2 font-medium">臂</th>
+              {strategies.map((s) => (
+                <th key={s} className="px-3 py-2 text-right font-medium">
+                  {strategyLabel(s)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {arms.map((arm) => {
+              const recs = items[arm.name] ?? [];
+              return (
+                <tr key={arm.name} className="border-t border-border/60">
+                  <td className="px-3 py-1.5 align-top font-medium">
+                    {arm.name}
+                    <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                      {recs.length} 条
+                    </span>
                   </td>
-                ))}
-                {SCORE_DIMS.map((d) => {
-                  const v = mean(recs, d.key);
-                  return (
-                    <td key={d.key} className="px-3 py-1.5 text-right font-mono text-muted-foreground">
-                      {v === null ? "—" : v.toFixed(3)}
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  {strategies.map((s) => {
+                    const st = strategySubsetStats(recs, s);
+                    if (st.n === 0) {
+                      return (
+                        <td
+                          key={s}
+                          className="px-3 py-1.5 text-right text-muted-foreground/50"
+                        >
+                          —
+                        </td>
+                      );
+                    }
+                    return (
+                      <td key={s} className="px-3 py-1.5 text-right">
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="text-[10px] text-muted-foreground">
+                            N={st.n}
+                          </span>
+                          {SCORE_DIMS.map((d) => {
+                            const v = st.perDimMean[d.key] ?? null;
+                            return (
+                              <span
+                                key={d.key}
+                                className="whitespace-nowrap font-mono text-[11px]"
+                              >
+                                <span className="mr-1 text-muted-foreground">
+                                  {d.short}
+                                </span>
+                                <span
+                                  className={cn("font-medium", scoreTone(v))}
+                                >
+                                  {scoreText(v, 2)}
+                                </span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
+        每格为该臂该策略子集的简单均值（含 N 条）；多数据集运行时为跨数据集的加权混合。
+      </div>
     </div>
   );
 }

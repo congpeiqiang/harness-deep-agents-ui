@@ -136,7 +136,7 @@ export interface RunDetail {
   gate: GateResult | null;
 }
 
-// ── 打分维度元数据（评估器五维，仅展示用） ──────────────
+// ── 打分维度元数据（离线评估 4 维，仅展示用） ─────────────
 // 后端 item.scores 是动态 dict（judge 关时可能缺 biz_correct）。
 // 前端按固定顺序渲染，缺失维度显示 —。
 export const SCORE_DIMS: { key: string; label: string; short: string }[] = [
@@ -153,11 +153,17 @@ export function dimValue(rec: ExperimentRecord, key: string): number | null {
 
 // ── API ────────────────────────────────────────────────
 
-export async function fetchDatasets(): Promise<DatasetMeta[]> {
-  const resp = await request<{ datasets: DatasetMeta[] }>(
+export interface DatasetList {
+  datasets: DatasetMeta[];
+  /** 后端区分「暂无数据集」与「读取失败」的原因文案 */
+  note?: string;
+}
+
+export async function fetchDatasets(): Promise<DatasetList> {
+  const resp = await request<{ datasets: DatasetMeta[]; note?: string }>(
     "/api/experiment/datasets"
   );
-  return resp.datasets ?? [];
+  return { datasets: resp.datasets ?? [], note: resp.note };
 }
 
 export async function fetchPromptLabels(name?: string): Promise<PromptInfo[]> {

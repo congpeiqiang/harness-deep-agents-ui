@@ -1,6 +1,7 @@
 "use client";
 
-// 门禁徽章：双臂对比后 PASS / FAIL + failures 原因。
+// 门禁徽章：双臂对比 PASS / FAIL + failures 原因。
+// ref/cand 与判定结果均沿用后端原样返回，不做本地推测。
 import { ShieldCheck, ShieldX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GateResult } from "@/lib/experiment";
@@ -27,7 +28,7 @@ export default function GateBadge({ gate }: { gate: GateResult | null }) {
         门禁 {passed ? "PASS" : "FAIL"}
       </span>
       <span className="text-xs text-muted-foreground">
-        {gate.ref} vs {gate.cand}（阈值 ±{gate.threshold}）
+        判定基准 {gate.ref} 对候选 {gate.cand}（阈值 ±{gate.threshold}）
       </span>
       {gate.failures.length > 0 && (
         <div className="mt-1 w-full">

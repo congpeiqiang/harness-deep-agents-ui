@@ -2,22 +2,19 @@
 
 // 运行进度卡：2s 轮询 fetchRun，展示 stage / 进度条 / 错误。
 // 终态（done/error/interrupted）通过 onStatus 通知父组件停止轮询并渲染结果。
-import { useEffect, useState } from "react";
+// 状态/阶段/短 stamp 文案统一收编自 experimentStats（RUN_STATUS_META / STAGE_LABEL）。
+import { useEffect, useState, type ReactNode } from "react";
 import { Loader2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fetchRun, type RunDetail } from "@/lib/experiment";
+import { fetchRun, type RunDetail, type RunStatus } from "@/lib/experiment";
+import { RUN_STATUS_META, STAGE_LABEL, shortStamp } from "@/lib/experimentStats";
 
-const STAGE_LABEL: Record<string, string> = {
-  queued: "排队中",
-  loading_dataset: "装载查询集",
-  running_arms: "运行臂",
-  complete: "完成",
-  failed: "失败",
+const STATUS_ICON: Record<RunStatus, ReactNode> = {
+  running: <Loader2 className="size-3.5 animate-spin" />,
+  done: <CheckCircle2 className="size-3.5" />,
+  error: <XCircle className="size-3.5" />,
+  interrupted: <AlertTriangle className="size-3.5" />,
 };
-
-function shortStamp(s: string): string {
-  return s.length > 15 ? `${s.slice(0, 8)}…${s.slice(-6)}` : s;
-}
 
 export default function RunProgressCard({
   stamp,
@@ -52,7 +49,7 @@ export default function RunProgressCard({
       timer = setTimeout(tick, 2000);
     };
 
-    tick();
+    void tick();
     return () => {
       stopped = true;
       if (timer) clearTimeout(timer);
@@ -72,8 +69,7 @@ export default function RunProgressCard({
   const pct =
     prog && prog.total > 0 ? Math.round((prog.done / prog.total) * 100) : 0;
   const isRunning = detail.status === "running";
-  const isError = detail.status === "error";
-  const isInterrupted = detail.status === "interrupted";
+  const statusMeta = RUN_STATUS_META[detail.status] ?? RUN_STATUS_META.error;
 
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
@@ -81,27 +77,15 @@ export default function RunProgressCard({
         <span className="font-mono text-xs text-muted-foreground">
           run {shortStamp(stamp)}
         </span>
-        {isRunning ? (
-          <span className="inline-flex items-center gap-1.5 rounded bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">
-            <Loader2 className="size-3.5 animate-spin" />
-            运行中
-          </span>
-        ) : isError ? (
-          <span className="inline-flex items-center gap-1.5 rounded bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">
-            <XCircle className="size-3.5" />
-            失败
-          </span>
-        ) : isInterrupted ? (
-          <span className="inline-flex items-center gap-1.5 rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-            <AlertTriangle className="size-3.5" />
-            超时中断
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-            <CheckCircle2 className="size-3.5" />
-            完成
-          </span>
-        )}
+        <span
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-xs font-medium",
+            statusMeta.className
+          )}
+        >
+          {STATUS_ICON[detail.status]}
+          {statusMeta.label}
+        </span>
         <span className="text-xs text-muted-foreground">
           {STAGE_LABEL[detail.stage] ?? detail.stage}
         </span>
@@ -110,18 +94,14 @@ export default function RunProgressCard({
       {isRunning && prog && (
         <div className="mt-3">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              {prog.current ? `当前：${prog.current}` : "准备中…"}
-            </span>
+            <span>{prog.current ? `当前：${prog.current}` : "准备中…"}</span>
             <span>
               {prog.done} / {prog.total} 臂
             </span>
           </div>
           <div className="mt-1.5 h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
             <div
-              className={cn(
-                "h-full rounded-full bg-sky-500 transition-all duration-500"
-              )}
+              className="h-full rounded-full bg-sky-500 transition-all duration-500"
               style={{ width: `${pct}%` }}
             />
           </div>

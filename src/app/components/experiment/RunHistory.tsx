@@ -1,43 +1,48 @@
 "use client";
 
-// 历史 run 列表：stamp / status / gate，点击载入与当前并排对比；可删除（hover 显示）。
-import { useEffect, useState } from "react";
+// 历史 run 列表：stamp / status / gate，点击载入该 run 结果；可删除（hover 显示）。
+// 状态 pill 用 RunStatusBadge（RUN_STATUS_META 统一色表）；顶部 Tab 按状态筛选。
+// 筛选后的列表通过 onListChange 上报父页，父页据以做「自动选中/删除回落」。
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { RefreshCw, Trash2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { listRuns, deleteRun, type RunStatus, type RunSummary } from "@/lib/experiment";
+import { listRuns, deleteRun, type RunSummary } from "@/lib/experiment";
+import { fmtClock } from "@/lib/experimentStats";
+import RunStatusBadge from "@/app/components/experiment/RunStatusBadge";
 
-const STATUS_STYLE: Record<RunStatus, string> = {
-  running: "bg-sky-100 text-sky-700",
-  done: "bg-emerald-100 text-emerald-700",
-  error: "bg-rose-100 text-rose-700",
-  interrupted: "bg-amber-100 text-amber-700",
-};
+type TabKey = "" | "running" | "done" | "error";
 
-const STATUS_LABEL: Record<RunStatus, string> = {
-  running: "运行中",
-  done: "完成",
-  error: "失败",
-  interrupted: "中断",
-};
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "", label: "全部" },
+  { key: "running", label: "运行中" },
+  { key: "done", label: "完成" },
+  { key: "error", label: "失败" },
+];
 
-function fmtTime(iso: string): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("zh-CN", { hour12: false });
+function matchesTab(r: RunSummary, tab: TabKey): boolean {
+  if (!tab) return true;
+  // 「失败」tab 收纳 error + interrupted（pill 内仍用「中断」文案区分）
+  if (tab === "error") {
+    return r.status === "error" || r.status === "interrupted";
+  }
+  return r.status === tab;
 }
 
 export default function RunHistory({
   activeStamp,
   onSelect,
   onDeleted,
+  onListChange,
 }: {
   activeStamp: string | null;
   onSelect: (stamp: string) => void;
   onDeleted?: (stamp: string) => void;
+  /** 当前 Tab 筛选后的列表，父页据此做自动选中 / 删除回落。 */
+  onListChange?: (runs: RunSummary[]) => void;
 }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [tab, setTab] = useState<TabKey>("");
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
 
@@ -51,6 +56,20 @@ export default function RunHistory({
       setLoading(false);
     }
   };
+
+  const filtered = useMemo(
+    () => runs.filter((r) => matchesTab(r, tab)),
+    [runs, tab]
+  );
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  // 当前 Tab 筛选结果上报父页（含初始空表与删除后的回落）
+  useEffect(() => {
+    onListChange?.(filtered);
+  }, [filtered, onListChange]);
 
   const handleDelete = async (stamp: string) => {
     if (!window.confirm(`删除实验 ${stamp}？其结果明细文件将一并删除，不可恢复。`)) {
@@ -69,32 +88,55 @@ export default function RunHistory({
     }
   };
 
-  useEffect(() => {
-    refresh();
-  }, []);
-
   return (
-    <div className="rounded-lg border border-border bg-card shadow-sm">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+    <div className="flex h-full flex-col rounded-lg border border-border bg-card shadow-sm">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <h2 className="text-sm font-medium">历史实验</h2>
         <button
-          onClick={refresh}
+          onClick={() => void refresh()}
           className="rounded p-1 text-muted-foreground hover:bg-accent"
           title="刷新"
         >
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
         </button>
       </div>
-      <div className="max-h-[28rem] overflow-y-auto p-1.5">
+
+      {/* 状态 Tab 筛选（失败 tab 含中断，pill 中中断仍 amber 区分） */}
+      <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
+        {TABS.map((t) => {
+          const count = t.key
+            ? runs.filter((r) => matchesTab(r, t.key)).length
+            : runs.length;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={cn(
+                "rounded px-2 py-1 text-xs transition-colors",
+                tab === t.key
+                  ? "bg-accent font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-accent/50"
+              )}
+            >
+              {t.label}
+              <span className="ml-1 font-mono text-[10px] opacity-60">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
         {loading && runs.length === 0 ? (
           <p className="flex items-center gap-1.5 p-2 text-xs text-muted-foreground">
             <Loader2 className="size-3 animate-spin" />
             加载中…
           </p>
-        ) : runs.length === 0 ? (
-          <p className="p-2 text-xs text-muted-foreground">暂无实验记录</p>
+        ) : filtered.length === 0 ? (
+          <p className="p-2 text-xs text-muted-foreground">
+            {runs.length === 0 ? "暂无实验记录" : "当前筛选下无实验"}
+          </p>
         ) : (
-          runs.map((r) => (
+          filtered.map((r) => (
             <div
               key={r.stamp}
               className={cn(
@@ -109,14 +151,7 @@ export default function RunHistory({
                 className="min-w-0 flex-1 text-left"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span
-                    className={cn(
-                      "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                      STATUS_STYLE[r.status]
-                    )}
-                  >
-                    {STATUS_LABEL[r.status]}
-                  </span>
+                  <RunStatusBadge status={r.status} />
                   {r.gate && (
                     <span
                       className={cn(
@@ -147,7 +182,7 @@ export default function RunHistory({
                 </div>
                 <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
                   <span>{r.dataset || "—"}</span>
-                  <span>{fmtTime(r.started_at)}</span>
+                  <span>{fmtClock(r.started_at)}</span>
                 </div>
               </button>
               <button

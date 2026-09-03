@@ -1,6 +1,6 @@
 "use client";
 
-// 逐条明细抽屉：question / db / strategy / 五维分 / SQL / result_head / trace 链接。
+// 逐条明细抽屉：question / db / strategy / 4 维分 / SQL / result_head / trace 链接。
 import { ExternalLink, X } from "lucide-react";
 import {
   Dialog,
@@ -9,17 +9,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SCORE_DIMS, dimValue, type ExperimentRecord } from "@/lib/experiment";
-
-const STRATEGY_LABEL: Record<string, string> = {
-  A: "策略A（语义库）",
-  B: "策略B（直连）",
-  C: "策略C（经验）",
-  none: "未分层",
-};
-
-function shortId(s: string): string {
-  return s.length > 16 ? `${s.slice(0, 8)}…${s.slice(-8)}` : s;
-}
+import {
+  scoreText,
+  scoreTone,
+  shortId,
+  strategyLabel,
+} from "@/lib/experimentStats";
 
 export default function ItemDetailDrawer({
   open,
@@ -48,7 +43,7 @@ export default function ItemDetailDrawer({
             {/* 概览徽章 */}
             <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
               <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-700">
-                {STRATEGY_LABEL[record.strategy ?? ""] ?? record.strategy ?? "未分层"}
+                {strategyLabel(record.strategy)}
               </span>
               {record.dataset_name && (
                 <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
@@ -78,7 +73,7 @@ export default function ItemDetailDrawer({
               <p className="mt-0.5 text-sm leading-snug">{record.question || "（空）"}</p>
             </div>
 
-            {/* 五维分 */}
+            {/* 4 维分 */}
             <div>
               <p className="mb-1 text-xs font-medium text-muted-foreground">评估维度</p>
               <div className="flex flex-wrap gap-1.5">
@@ -90,19 +85,7 @@ export default function ItemDetailDrawer({
                       className="rounded border border-border bg-muted px-2 py-1 text-xs"
                     >
                       {d.label}{" "}
-                      <span
-                        className={
-                          v === null
-                            ? "text-muted-foreground"
-                            : v >= 0.8
-                              ? "text-emerald-600"
-                              : v >= 0.4
-                                ? "text-amber-600"
-                                : "text-rose-600"
-                        }
-                      >
-                        {v === null ? "—" : v.toFixed(3)}
-                      </span>
+                      <span className={scoreTone(v)}>{scoreText(v)}</span>
                     </span>
                   );
                 })}
