@@ -72,6 +72,8 @@ export interface RunRequest {
   arms: ArmDef[];
   judge?: boolean;
   threshold?: number;
+  /** 实验级描述（整轮一条；Langfuse run 描述 + run 记录共用，可选） */
+  description?: string;
 }
 
 export interface ExperimentRecord {
@@ -126,6 +128,8 @@ export interface RunSummary {
   gate: GateResult | null;
   started_at: string;
   finished_at: string;
+  /** 实验级描述（提交时填写，可选） */
+  description?: string;
 }
 
 export interface RunDetail {
@@ -137,6 +141,8 @@ export interface RunDetail {
   error: string;
   started_at: string;
   finished_at: string;
+  /** 实验级描述（提交时填写，可选） */
+  description?: string;
   manifest: Record<string, unknown> | null;
   items: Record<string, ExperimentRecord[]>;
   gate: GateResult | null;

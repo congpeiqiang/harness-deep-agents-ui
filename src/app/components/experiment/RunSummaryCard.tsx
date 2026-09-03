@@ -95,6 +95,14 @@ export default function RunSummaryCard({ detail }: { detail: RunDetail }) {
         )}
       </div>
 
+      {/* 实验级描述（提交时填写，整轮一条） */}
+      {detail.description ? (
+        <div className="mt-2 rounded-md border border-border/70 bg-muted/20 px-2.5 py-1.5 text-xs leading-relaxed text-foreground/80">
+          <span className="mr-1.5 font-medium text-muted-foreground">描述</span>
+          {detail.description}
+        </div>
+      ) : null}
+
       {/* 数据集 + 样本量 */}
       {dsOrder.length > 0 && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px]">

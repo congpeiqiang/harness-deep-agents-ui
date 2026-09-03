@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { FlaskConical, Loader2, Plus, Trash2, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -68,6 +69,8 @@ export default function ExperimentForm({
   const [limit, setLimit] = useState("");
   const [judge, setJudge] = useState(false);
   const [threshold, setThreshold] = useState("0.05");
+  // 实验级描述（可选）：整轮一条，写入 Langfuse run 描述 + run 记录，便于后续溯源
+  const [description, setDescription] = useState("");
 
   const [promptLabels, setPromptLabels] = useState<PromptInfo[]>([]);
   const [skillRefs, setSkillRefs] = useState<GitRefs>({ tags: [], branches: [], head: "" });
@@ -229,6 +232,7 @@ export default function ExperimentForm({
         dataset_limit: limit.trim() ? parseInt(limit, 10) : 0,
         judge,
         threshold: Number.isFinite(th) ? th : 0.05,
+        description: description.trim(),
         arms: arms.map((a) => ({
           name: a.name.trim(),
           prompt_label: a.prompt_label || "",
@@ -417,6 +421,18 @@ export default function ExperimentForm({
             <label className="flex items-center gap-2 text-sm">
               <Switch checked={judge} onCheckedChange={setJudge} />
               启用 LLM 判分（sql_biz_correct_score，更慢）
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-muted-foreground">
+                描述 Description（可选 · 整轮一条，写入 Langfuse run 描述，便于后续溯源）
+              </span>
+              <Textarea
+                className="min-h-16 resize-y text-sm"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={2000}
+                placeholder="例如：验证 v6 语义库相对 v5 的回归表现"
+              />
             </label>
           </div>
           <div className="mt-5 flex justify-end">
