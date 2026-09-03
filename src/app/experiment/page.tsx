@@ -207,11 +207,14 @@ export default function ExperimentPage() {
                 </Button>
               </div>
             </div>
-          ) : detail && detail.status === "running" ? (
+          ) : detail &&
+            (detail.status === "running" || detail.status === "cancelling") ? (
             <div className="mx-auto max-w-2xl space-y-4">
               <RunProgressCard stamp={activeStamp} onStatus={onStatus} />
               <p className="text-xs text-muted-foreground">
-                运行完成后自动展示对比结果（可稍后从左侧历史重新打开）。
+                {detail.status === "cancelling"
+                  ? "正在停止…当前问题跑完后结束，已完成部分保留。"
+                  : "运行完成后自动展示对比结果（可稍后从左侧历史重新打开）。"}
               </p>
             </div>
           ) : detail ? (

@@ -1,19 +1,28 @@
 "use client";
 
-// 运行进度卡：2s 轮询 fetchRun，展示 stage / 进度条 / 错误。
-// 终态（done/error/interrupted）通过 onStatus 通知父组件停止轮询并渲染结果。
-// 状态/阶段/短 stamp 文案统一收编自 experimentStats（RUN_STATUS_META / STAGE_LABEL）。
+// 运行进度卡：2s 轮询 fetchRun，展示 stage / 进度条 / 错误 / 停止按钮。
+// 运行中（running/cancelling）轮询不停；终态（done/error/interrupted/cancelled）通过
+// onStatus 通知父组件停止轮询并渲染结果。停止走 POST /runs/{stamp}/cancel（cooperative：
+// 后端写标记，每题/每臂断点干净退出，已完成部分保留）。状态/阶段统一收编 experimentStats。
 import { useEffect, useState, type ReactNode } from "react";
-import { Loader2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { toast } from "sonner";
+import { Loader2, CheckCircle2, XCircle, AlertTriangle, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fetchRun, type RunDetail, type RunStatus } from "@/lib/experiment";
+import {
+  fetchRun,
+  cancelRun,
+  type RunDetail,
+  type RunStatus,
+} from "@/lib/experiment";
 import { RUN_STATUS_META, STAGE_LABEL, shortStamp } from "@/lib/experimentStats";
 
 const STATUS_ICON: Record<RunStatus, ReactNode> = {
   running: <Loader2 className="size-3.5 animate-spin" />,
+  cancelling: <Loader2 className="size-3.5 animate-spin" />,
   done: <CheckCircle2 className="size-3.5" />,
   error: <XCircle className="size-3.5" />,
   interrupted: <AlertTriangle className="size-3.5" />,
+  cancelled: <Square className="size-3.5" />,
 };
 
 export default function RunProgressCard({
@@ -24,6 +33,7 @@ export default function RunProgressCard({
   onStatus: (d: RunDetail) => void;
 }) {
   const [detail, setDetail] = useState<RunDetail | null>(null);
+  const [stopping, setStopping] = useState(false);
 
   useEffect(() => {
     let stopped = false;
@@ -34,7 +44,9 @@ export default function RunProgressCard({
         const d = await fetchRun(stamp);
         if (stopped) return;
         setDetail(d);
-        if (d.status !== "running") {
+        // running + cancelling（已点停止，等待当前题自然收尾）都继续轮询；
+        // 其余为终态 → 交还父组件切换视图
+        if (d.status !== "running" && d.status !== "cancelling") {
           onStatus(d);
           return;
         }
@@ -56,6 +68,22 @@ export default function RunProgressCard({
     };
   }, [stamp, onStatus]);
 
+  const handleStop = async () => {
+    setStopping(true);
+    try {
+      await cancelRun(stamp);
+      // 后端状态将转 cancelling → cancelled，轮询自会衔接；无需本地改 detail
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 409「已结束」= run 恰在点击时自然完成（正常竞态），轮询会切到终态视图
+      if (!msg.includes("已结束")) {
+        toast.error(`停止失败: ${msg}`);
+      }
+    } finally {
+      setStopping(false);
+    }
+  };
+
   if (!detail) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -68,7 +96,7 @@ export default function RunProgressCard({
   const prog = detail.progress;
   const pct =
     prog && prog.total > 0 ? Math.round((prog.done / prog.total) * 100) : 0;
-  const isRunning = detail.status === "running";
+  const active = detail.status === "running" || detail.status === "cancelling";
   const statusMeta = RUN_STATUS_META[detail.status] ?? RUN_STATUS_META.error;
 
   return (
@@ -89,9 +117,24 @@ export default function RunProgressCard({
         <span className="text-xs text-muted-foreground">
           {STAGE_LABEL[detail.stage] ?? detail.stage}
         </span>
+        {detail.status === "running" && (
+          <button
+            onClick={() => void handleStop()}
+            disabled={stopping}
+            className="ml-auto inline-flex items-center gap-1 rounded border border-rose-300 px-2 py-1 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+            title="停止实验：当前这一题跑完后即停，已完成部分保留"
+          >
+            {stopping ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <Square className="size-3" />
+            )}
+            {stopping ? "停止中…" : "停止"}
+          </button>
+        )}
       </div>
 
-      {isRunning && prog && (
+      {active && prog && (
         <div className="mt-3">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>{prog.current ? `当前：${prog.current}` : "准备中…"}</span>

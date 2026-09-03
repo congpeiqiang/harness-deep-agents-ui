@@ -58,9 +58,14 @@ export const RUN_STATUS_META: Record<
   { label: string; className: string }
 > = {
   running: { label: "运行中", className: "bg-sky-100 text-sky-700" },
+  cancelling: {
+    label: "停止中…",
+    className: "bg-amber-100 text-amber-700",
+  },
   done: { label: "完成", className: "bg-emerald-100 text-emerald-700" },
   error: { label: "失败", className: "bg-rose-100 text-rose-700" },
   interrupted: { label: "中断", className: "bg-amber-100 text-amber-700" },
+  cancelled: { label: "已停止", className: "bg-slate-100 text-slate-600" },
 };
 
 export const STAGE_LABEL: Record<string, string> = {
@@ -69,6 +74,7 @@ export const STAGE_LABEL: Record<string, string> = {
   running_arms: "运行臂",
   complete: "完成",
   failed: "失败",
+  cancelled: "已停止",
 };
 
 export function stageLabel(stage: string): string {

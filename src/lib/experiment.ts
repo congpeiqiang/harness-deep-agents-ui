@@ -102,7 +102,13 @@ export interface GateResult {
   threshold: number;
 }
 
-export type RunStatus = "running" | "done" | "error" | "interrupted";
+export type RunStatus =
+  | "running"
+  | "cancelling"
+  | "done"
+  | "error"
+  | "interrupted"
+  | "cancelled";
 
 export interface RunProgress {
   stage: string;
@@ -207,5 +213,13 @@ export async function fetchRun(stamp: string): Promise<RunDetail> {
 export async function deleteRun(stamp: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/experiment/runs/${stamp}`, {
     method: "DELETE",
+  });
+}
+
+/** 停止运行中的实验：后端写停止标记，orchestrator/worker 在每题/每臂断点干净退出，
+ * run 状态经 cancelling（暂态）→ cancelled（终态，保留已完成部分）。 */
+export async function cancelRun(stamp: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/experiment/runs/${stamp}/cancel`, {
+    method: "POST",
   });
 }

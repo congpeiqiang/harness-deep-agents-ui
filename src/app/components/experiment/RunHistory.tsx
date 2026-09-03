@@ -11,20 +11,29 @@ import { listRuns, deleteRun, type RunSummary } from "@/lib/experiment";
 import { fmtClock } from "@/lib/experimentStats";
 import RunStatusBadge from "@/app/components/experiment/RunStatusBadge";
 
-type TabKey = "" | "running" | "done" | "error";
+type TabKey = "" | "running" | "done" | "error" | "cancelled";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "", label: "全部" },
   { key: "running", label: "运行中" },
   { key: "done", label: "完成" },
   { key: "error", label: "失败" },
+  { key: "cancelled", label: "已停止" },
 ];
 
 function matchesTab(r: RunSummary, tab: TabKey): boolean {
   if (!tab) return true;
+  // 「运行中」tab 收纳 running + cancelling（点停止后到终态前仍算运行中）
+  if (tab === "running") {
+    return r.status === "running" || r.status === "cancelling";
+  }
   // 「失败」tab 收纳 error + interrupted（pill 内仍用「中断」文案区分）
   if (tab === "error") {
     return r.status === "error" || r.status === "interrupted";
+  }
+  // 「已停止」tab 只收手动停止的 cancelled（与「中断」超时兜底分开）
+  if (tab === "cancelled") {
+    return r.status === "cancelled";
   }
   return r.status === tab;
 }

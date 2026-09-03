@@ -2,7 +2,7 @@
 
 // run 摘要卡：状态 pill + 阶段 + 耗时 + stamp + 起止时间 + 数据集 chips +
 // 每臂样本数与版本 meta + 门禁 +（error/interrupted）真实 error 全文显性化。
-import { CheckCircle2, Loader2, XCircle, AlertTriangle } from "lucide-react";
+import { CheckCircle2, Loader2, XCircle, AlertTriangle, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type ArmDef, type RunDetail } from "@/lib/experiment";
 import {
@@ -17,9 +17,11 @@ import GateBadge from "@/app/components/experiment/GateBadge";
 
 const STATUS_ICON = {
   running: <Loader2 className="size-3.5 animate-spin" />,
+  cancelling: <Loader2 className="size-3.5 animate-spin" />,
   done: <CheckCircle2 className="size-3.5" />,
   error: <XCircle className="size-3.5" />,
   interrupted: <AlertTriangle className="size-3.5" />,
+  cancelled: <Square className="size-3.5" />,
 } as const;
 
 function ArmMeta({ arm, count }: { arm: ArmDef; count: number }) {
@@ -124,6 +126,13 @@ export default function RunSummaryCard({ detail }: { detail: RunDetail }) {
         <div className="mt-2.5 border-t border-border/60 pt-2.5">
           <GateBadge gate={detail.gate} />
         </div>
+      )}
+
+      {/* 手动停止：非失败，展示保留的已完成部分 */}
+      {detail.status === "cancelled" && (
+        <p className="mt-2.5 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          已按你的停止请求终止，仅展示停止前已完成的样本（共 {total} 条）。
+        </p>
       )}
 
       {/* 错误显性化：真实 error 全文（替代旧「不存在或读取失败」吞错） */}
