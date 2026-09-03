@@ -70,6 +70,19 @@ const FAIL_TERMINAL_STATUSES = new Set(["error", "timeout", "cancelled", "failed
 // 宽限期须大于方案1 最坏等主线程空闲的 30s（sync 忙则跳过不汇报），
 // 否则方案1 汇报消息到达前占位已渲染 → 与 AI 汇报重复。
 const FAIL_FALLBACK_GRACE_MS = 35000;
+// ── 方案3 误报收敛：主 agent 已给出实质回答/说明 → 不兜底 ──
+// 卡片自身文案「若上方 AI 未说明原因」——只有 AI 始终没给实质文本才兜底。
+// 只扫当前会话边界（最后一条 human 之后）内的 AI 消息；纯工具调用（content 无 text）不算已说明。
+const lastAiMessageHasExplanation = (msgs: Message[]): boolean => {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.type === "human") break; // 上一轮的回答不算「本轮已说明」
+    if (m.type === "ai" && extractStringFromMessageContent(m).trim().length > 0) {
+      return true;
+    }
+  }
+  return false;
+};
 // eslint-disable  MS80OmFIVnBZMlhrdUp2bG43bmx2TG82VVVSdWNnPT06YjFiOWU4MzE=
 
 export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
@@ -237,6 +250,13 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   // 定时器回调里读最新 async_tasks（effect 闭包里的 asyncTasks 会过期）
   const asyncTasksRef = useRef<Record<string, any>>({});
   asyncTasksRef.current = (asyncTasks as Record<string, any>) ?? {};
+  // 定时器回调里读最新 messages / 运行态（effect 闭包里的会过期）
+  const chatStatusRef = useRef<{ messages: Message[]; queryInProgress: boolean; isLoading: boolean }>({
+    messages,
+    queryInProgress,
+    isLoading,
+  });
+  chatStatusRef.current = { messages, queryInProgress, isLoading };
 
   useEffect(() => {
     if (!asyncTasks || typeof asyncTasks !== "object") return;
@@ -255,6 +275,12 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
         if (latestT?.failure_reported || !FAIL_TERMINAL_STATUSES.has(latestT?.status ?? status)) {
           return;
         }
+        const { messages: msgs, queryInProgress: running, isLoading: streaming } = chatStatusRef.current;
+        // 主 agent 仍在运行（可能自愈/继续给出回答）→ 暂不兜底，
+        // 运行结束后 effect 依赖翻转重排定时器再查一次，真·静默失败仍能兜底。
+        if (running || streaming) return;
+        // AI 已给出实质回答/说明 → 不兜底（卡片「若上方 AI 未说明原因」的前提不成立）
+        if (lastAiMessageHasExplanation(msgs)) return;
         setFailedFallbackTasks((prev) => {
           const next = new Set(prev);
           next.add(taskId);
@@ -263,7 +289,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
       }, FAIL_FALLBACK_GRACE_MS);
       failedFallbackTimersRef.current.set(taskId, timer);
     }
-  }, [asyncTasks, failedFallbackTasks]);
+  }, [asyncTasks, failedFallbackTasks, queryInProgress, isLoading]);
 
   // 卸载清理未触发的兜底定时器
   useEffect(() => {
