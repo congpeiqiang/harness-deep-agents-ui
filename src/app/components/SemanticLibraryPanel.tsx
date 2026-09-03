@@ -28,6 +28,7 @@ import {
   pushToGit,
   getGitStatus,
   gitPull,
+  getGitSshKey,
   openProjectDirectory,
   type SemanticProject,
   type IntrospectTable,
@@ -46,7 +47,7 @@ interface SemanticLibraryPanelProps {
 
 const NONE_SENTINEL = "__no_db__";
 
-type AddMode = "ai" | "manual" | "git" | "local" | null;
+type AddMode = "ai" | "manual" | "git" | "local" | "push" | null;
 type CreateStep = 1 | 2 | 3 | 4;
 
 /**
@@ -96,6 +97,8 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
   const [pushUrl, setPushUrl] = useState("");
   const [pushBranch, setPushBranch] = useState("main");
   const [pushTag, setPushTag] = useState("");
+  const [pushForce, setPushForce] = useState(false);
+  const [pushCommitMsg, setPushCommitMsg] = useState("初始化语义库");
 
   // 知识编辑器
   const [editingProject, setEditingProject] = useState<string | null>(null);
@@ -318,7 +321,8 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
         remote_url: pushUrl.trim(),
         branch: pushBranch || "main",
         tag: pushTag || undefined,
-        commit_message: "初始化语义库",
+        commit_message: pushCommitMsg.trim() || "初始化语义库",
+        force: pushForce,
       });
       if (!r.ok) {
         setError(r.error || r.message || "推送失败");
@@ -469,6 +473,7 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
                 setPushUrl(p.git?.remote || "");
                 setPushBranch(p.git?.branch || "main");
                 setPushTag("");
+                setPushCommitMsg("初始化语义库");
                 setAddMode("push");
               }}
               onPull={() => doGitPull(p.name, p.project_name)}
@@ -571,11 +576,15 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
                 url={pushUrl}
                 branch={pushBranch}
                 tag={pushTag}
+                commitMsg={pushCommitMsg}
+                force={pushForce}
                 busy={busy}
                 busyOp={busyOp}
                 onSetUrl={setPushUrl}
                 onSetBranch={setPushBranch}
                 onSetTag={setPushTag}
+                onSetCommitMsg={setPushCommitMsg}
+                onSetForce={setPushForce}
                 onPush={doPushGit}
                 onClose={() => setAddMode(null)}
               />
@@ -1272,25 +1281,112 @@ function PushGitDialog({
   url,
   branch,
   tag,
+  commitMsg,
+  force,
   busy,
   busyOp,
   onSetUrl,
   onSetBranch,
   onSetTag,
+  onSetCommitMsg,
+  onSetForce,
   onPush,
   onClose,
 }: {
   url: string;
   branch: string;
   tag: string;
+  commitMsg: string;
+  force: boolean;
   busy: boolean;
   busyOp: string;
   onSetUrl: (v: string) => void;
   onSetBranch: (v: string) => void;
   onSetTag: (v: string) => void;
+  onSetCommitMsg: (v: string) => void;
+  onSetForce: (v: boolean) => void;
   onPush: () => void;
   onClose: () => void;
 }) {
+  // SSH 公钥（后端推送用身份，账号级）——打开弹窗即拉取，便于复制到 GitLab
+  const [pubkey, setPubkey] = useState<string | null>(null);
+  const [pubkeyErr, setPubkeyErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const pubkeyInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getGitSshKey()
+      .then((r) => {
+        if (!alive) return;
+        if (r.ok && r.pubkey) setPubkey(r.pubkey);
+        else setPubkeyErr(r.error || "获取 SSH 公钥失败");
+      })
+      .catch((e: Error) => {
+        if (alive) setPubkeyErr(e.message);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // 复制文本：仅安全上下文（https/localhost）可用 Clipboard API；
+  // 生产是 http 局域网 IP → navigator.clipboard 不存在，必须用隐藏 textarea + execCommand 兜底。
+  // 返回是否真正写入成功——execCommand 在复制未选中/被浏览器拒时会静默失败，不能无条件报成功。
+  const copyTextToClipboard = async (text: string): Promise<boolean> => {
+    try {
+      if (
+        typeof window !== "undefined" &&
+        window.isSecureContext &&
+        navigator.clipboard?.writeText
+      ) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      /* Clipboard API 失败 → 走 execCommand 兜底 */
+    }
+    // 兜底 textarea 必须真正移出视口（-9999px）并 focus+setSelectionRange，
+    // 否则部分浏览器 select() 不生效 → execCommand 复制的是旧的/空的选区
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    let ok = false;
+    try {
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    document.body.removeChild(ta);
+    return ok;
+  };
+
+  const copyPubkey = async () => {
+    if (!pubkey) return;
+    const ok = await copyTextToClipboard(pubkey);
+    if (ok) {
+      setCopyFailed(false);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } else {
+      // 自动复制被拒 → 主动全选公钥本体，引导用户 Ctrl+C 手动复制
+      setCopied(false);
+      setCopyFailed(true);
+      window.setTimeout(() => {
+        pubkeyInputRef.current?.focus();
+        pubkeyInputRef.current?.select();
+      }, 0);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -1302,6 +1398,48 @@ function PushGitDialog({
         >
           ✕
         </button>
+      </div>
+      {/* 后端推送身份：SSH 公钥（账号级，配一次 GitLab 可推所有仓库） */}
+      <div className="rounded-md border bg-muted/40 px-2 py-2">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <span className="text-[11px] font-medium text-muted-foreground">
+            后端推送使用此 SSH 公钥认证
+          </span>
+          {pubkey && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              onClick={copyPubkey}
+            >
+              {copied ? "✓ 已复制" : "复制公钥"}
+            </Button>
+          )}
+        </div>
+        {pubkey ? (
+          <input
+            ref={pubkeyInputRef}
+            readOnly
+            value={pubkey}
+            onFocus={(e) => e.currentTarget.select()}
+            onClick={(e) => e.currentTarget.select()}
+            className="w-full truncate rounded bg-background px-1.5 py-1 font-mono text-[11px] focus:outline-none"
+            title="点击自动全选，可手动复制"
+            aria-label="后端推送 SSH 公钥"
+          />
+        ) : pubkeyErr ? (
+          <div className="text-[11px] text-destructive">⚠ {pubkeyErr}</div>
+        ) : (
+          <div className="text-[11px] text-muted-foreground">加载公钥中…</div>
+        )}
+        {copyFailed && (
+          <div className="mt-1 text-[10px] text-destructive">
+            浏览器自动复制被拒绝：公钥已自动全选，请按 Ctrl+C 手动复制
+          </div>
+        )}
+        <div className="mt-1 text-[10px] leading-snug text-muted-foreground">
+          首次推送前请把公钥添加到 GitLab「偏好设置 → SSH Keys」（账号级，添加一次即可推送所有仓库）
+        </div>
       </div>
       <div className="grid gap-2">
         <div className="grid gap-1">
@@ -1332,6 +1470,35 @@ function PushGitDialog({
               placeholder="v1.0.0"
             />
           </div>
+        </div>
+        <div className="grid gap-1">
+          <Label className="text-xs">提交信息（commit message）</Label>
+          <Input
+            className="h-8 text-xs"
+            value={commitMsg}
+            onChange={(e) => onSetCommitMsg(e.target.value)}
+            placeholder="初始化语义库"
+          />
+        </div>
+        <div className="flex items-center gap-2 rounded border border-dashed px-2 py-1.5 border-muted">
+          <input
+            id="push-force"
+            type="checkbox"
+            checked={force}
+            onChange={(e) => onSetForce(e.target.checked)}
+            className="h-3.5 w-3.5"
+          />
+          <Label
+            htmlFor="push-force"
+            className={force ? "text-xs font-semibold text-amber-600" : "text-xs"}
+          >
+            强制覆盖远端（force push）
+          </Label>
+          {force && (
+            <span className="text-[11px] text-amber-600">
+              ⚠ 将覆盖远端同名分支/历史，请确认目标仓库
+            </span>
+          )}
         </div>
         <div className="flex justify-end">
           <Button size="sm" onClick={onPush} disabled={busy || !url.trim()}>

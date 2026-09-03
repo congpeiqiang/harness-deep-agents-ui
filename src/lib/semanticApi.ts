@@ -81,6 +81,8 @@ export interface PushToGitPayload {
   branch?: string;
   tag?: string;
   commit_message?: string;
+  /** 强制覆盖远端（force push）；缺省 false，历史分叉时后端会拒绝并提示 */
+  force?: boolean;
 }
 
 // 业务知识结构化类型
@@ -315,6 +317,17 @@ export async function gitPull(
   const res = await fetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/git-pull`, {
     method: "POST",
   });
+  return handle(res);
+}
+
+/** 后端推送 git 所用的 SSH 公钥（账号级，配一次到 GitLab 可推所有仓库） */
+export async function getGitSshKey(): Promise<{
+  ok: boolean;
+  pubkey?: string;
+  path?: string;
+  error?: string;
+}> {
+  const res = await fetch(`${apiBase()}/api/git-ssh-key`, { cache: "no-store" });
   return handle(res);
 }
 
