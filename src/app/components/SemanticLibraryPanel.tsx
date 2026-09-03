@@ -98,7 +98,7 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
   const [pushBranch, setPushBranch] = useState("main");
   const [pushTag, setPushTag] = useState("");
   const [pushForce, setPushForce] = useState(false);
-  const [pushCommitMsg, setPushCommitMsg] = useState("初始化语义库");
+  const [pushCommitMsg, setPushCommitMsg] = useState("");
 
   // 知识编辑器
   const [editingProject, setEditingProject] = useState<string | null>(null);
@@ -321,7 +321,7 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
         remote_url: pushUrl.trim(),
         branch: pushBranch || "main",
         tag: pushTag || undefined,
-        commit_message: pushCommitMsg.trim() || "初始化语义库",
+        commit_message: pushCommitMsg.trim(),
         force: pushForce,
       });
       if (!r.ok) {
@@ -473,7 +473,7 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
                 setPushUrl(p.git?.remote || "");
                 setPushBranch(p.git?.branch || "main");
                 setPushTag("");
-                setPushCommitMsg("初始化语义库");
+                setPushCommitMsg("");
                 setAddMode("push");
               }}
               onPull={() => doGitPull(p.name, p.project_name)}
@@ -1477,7 +1477,7 @@ function PushGitDialog({
             className="h-8 text-xs"
             value={commitMsg}
             onChange={(e) => onSetCommitMsg(e.target.value)}
-            placeholder="初始化语义库"
+            placeholder="留空自动生成（语义库名+时间）"
           />
         </div>
         <div className="flex items-center gap-2 rounded border border-dashed px-2 py-1.5 border-muted">
