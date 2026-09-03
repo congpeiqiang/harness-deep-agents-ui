@@ -62,7 +62,9 @@ export default function ExperimentForm({
   // 数据集加载态与空态原因分开：后端返回空数组 ≠ 加载中（此前空态误显示「加载中…」）
   const [dsLoading, setDsLoading] = useState(true);
   const [dsNote, setDsNote] = useState("");
-  const [selDatasets, setSelDatasets] = useState<string[]>(["badcase"]);
+  // 数据集默认全不选（此前默认勾 badcase，数据集未采集时提交/装载会 404 误导）。
+  // 提交时下方校验：至少勾一个才允许继续。
+  const [selDatasets, setSelDatasets] = useState<string[]>([]);
   const [limit, setLimit] = useState("");
   const [judge, setJudge] = useState(false);
   const [threshold, setThreshold] = useState("0.05");
