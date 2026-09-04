@@ -65,7 +65,8 @@ interface ChatInterfaceProps {
 
 // ── 方案3：子任务终态失败但方案1未自动汇报 → 聊天流兜底占位（双保险）──
 // 与后端 sync watcher 的 方案1 自动汇报范围对齐（error/timeout/cancelled）：
-// interrupted（HITL 审批暂停）非失败终态，不兜底。
+// interrupted 已不是终态（审批闸门移除后为上下文压缩的瞬时暂停，会自恢复），
+// 既不进 TERMINAL、也不兜底——后端 sync watcher 会持续轮询直到真实终态。
 const FAIL_TERMINAL_STATUSES = new Set(["error", "timeout", "cancelled", "failed"]);
 // 宽限期须大于方案1 最坏等主线程空闲的 30s（sync 忙则跳过不汇报），
 // 否则方案1 汇报消息到达前占位已渲染 → 与 AI 汇报重复。
@@ -339,7 +340,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   // 渲染"执行中"卡片（否则已完成会话会永远显示一个从 0 涨的计时器）。
   const terminalTaskIds = useMemo(() => {
     const s = new Set<string>();
-    const TERMINAL = new Set(["success", "error", "cancelled", "timeout", "interrupted", "failed"]);
+    const TERMINAL = new Set(["success", "error", "cancelled", "timeout", "failed"]);
     if (asyncTasks && typeof asyncTasks === "object") {
       for (const [key, t] of Object.entries(asyncTasks as Record<string, any>)) {
         const taskId = t?.task_id || t?.thread_id || key;
