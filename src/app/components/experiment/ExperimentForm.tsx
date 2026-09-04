@@ -19,6 +19,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+// 与聊天同源：读取「开启思考过程」开关当前值（config 持久化，同 ChatInterface 用法）
+import { getEnableThinking } from "@/lib/config";
 import {
   fetchDatasets,
   fetchPromptLabels,
@@ -227,12 +229,23 @@ export default function ExperimentForm({
     setSubmitting(true);
     try {
       const th = parseFloat(threshold);
+      // run 级模型块：继承顶部 ModelSelector 当前选择（localStorage 与 ModelSelector
+      // 持久化同源）+ 思考开关当前值 → 整轮强制用该模型（后端权威覆盖题目级）。
+      // 空串 = 未显式选 → 跟随 active/模块默认（与在线聊天空选择语义一致）。
+      const selRoute =
+        (typeof window !== "undefined" ? window.localStorage.getItem("selectedProvider") : null) || "";
+      const selModel =
+        (typeof window !== "undefined" ? window.localStorage.getItem("selectedModel") : null) || "";
+      const selThinking = getEnableThinking() ? "true" : "false";
       const resp = await submitRun({
         datasets: selDatasets,
         dataset_limit: limit.trim() ? parseInt(limit, 10) : 0,
         judge,
         threshold: Number.isFinite(th) ? th : 0.05,
         description: description.trim(),
+        llm_route: selRoute,
+        llm_model: selModel,
+        enable_thinking: selThinking,
         arms: arms.map((a) => ({
           name: a.name.trim(),
           prompt_label: a.prompt_label || "",
@@ -445,10 +458,15 @@ export default function ExperimentForm({
       {step === 2 && (
         <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] text-muted-foreground">
-              未指定的维度走默认：生产 prompt / 当前磁盘 skill / 当前语义库 HEAD。
-              建议：第一臂为基准（ref），后续臂为候选版本。
-            </p>
+            <div className="min-w-0">
+              <p className="text-[11px] text-muted-foreground">
+                未指定的维度走默认：生产 prompt / 当前磁盘 skill / 当前语义库 HEAD。
+                建议：第一臂为基准（ref），后续臂为候选版本。
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground/80">
+                模型：整轮统一使用提交时聊天顶栏当前所选模型（含思考开关）；未显式选 = 跟随默认。
+              </p>
+            </div>
             <Button variant="outline" size="sm" onClick={onAddArm} className="shrink-0">
               <Plus className="mr-1.5 size-3.5" />
               添加臂

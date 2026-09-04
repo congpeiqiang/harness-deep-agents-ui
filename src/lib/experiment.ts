@@ -74,6 +74,14 @@ export interface RunRequest {
   threshold?: number;
   /** 实验级描述（整轮一条；Langfuse run 描述 + run 记录共用，可选） */
   description?: string;
+  /**
+   * run 级模型块（与前端聊天所选一致 2026-09-04）：提交实验时继承顶部
+   * ModelSelector 当前选择。空串 = 跟随 active/模块默认；enable_thinking 恒
+   * "true"/"false"。存在即后端权威强制作用于全部题目（忽略题目级 llm_route 等）。
+   */
+  llm_route?: string;
+  llm_model?: string;
+  enable_thinking?: string;
 }
 
 export interface ExperimentRecord {
@@ -130,6 +138,8 @@ export interface RunSummary {
   finished_at: string;
   /** 实验级描述（提交时填写，可选） */
   description?: string;
+  /** 实际生效模型 chip '{provider}/{model}'（提交时溯源；旧 run 无此字段为空） */
+  model_label?: string;
 }
 
 export interface RunDetail {
@@ -143,6 +153,8 @@ export interface RunDetail {
   finished_at: string;
   /** 实验级描述（提交时填写，可选） */
   description?: string;
+  /** 实际生效模型 chip '{provider}/{model}'（提交时溯源；旧 run 无此字段为空） */
+  model_label?: string;
   manifest: Record<string, unknown> | null;
   items: Record<string, ExperimentRecord[]>;
   gate: GateResult | null;

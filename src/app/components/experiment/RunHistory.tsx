@@ -189,8 +189,15 @@ export default function RunHistory({
                     </span>
                   ))}
                 </div>
-                <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{r.dataset || "—"}</span>
+                <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2 text-[10px] text-muted-foreground">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span>{r.dataset || "—"}</span>
+                    {r.model_label && (
+                      <span className="truncate font-mono text-muted-foreground/80">
+                        模型 {r.model_label}
+                      </span>
+                    )}
+                  </span>
                   <span>{fmtClock(r.started_at)}</span>
                 </div>
               </button>

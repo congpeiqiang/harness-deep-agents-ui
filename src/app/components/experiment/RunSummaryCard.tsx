@@ -103,6 +103,14 @@ export default function RunSummaryCard({ detail }: { detail: RunDetail }) {
         </div>
       ) : null}
 
+      {/* run 级统一模型（与聊天所选一致；旧 run 无此字段为空则隐藏） */}
+      {detail.model_label ? (
+        <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2.5 py-0.5 text-[11px] text-muted-foreground">
+          <span className="font-medium">模型</span>
+          <span className="font-mono">{detail.model_label}</span>
+        </div>
+      ) : null}
+
       {/* 数据集 + 样本量 */}
       {dsOrder.length > 0 && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px]">
