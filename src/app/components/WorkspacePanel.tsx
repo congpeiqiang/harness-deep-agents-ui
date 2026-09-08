@@ -14,6 +14,15 @@ import {
   unregisterWorkspace,
   type WorkspaceInfo,
 } from "@/lib/workspace";
+import { deleteWorkspace } from "@/lib/workspaceFiles";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface WorkspacePanelProps {
   active?: boolean;
@@ -110,24 +119,52 @@ export function WorkspacePanel({ active = true, onChanged }: WorkspacePanelProps
     }
   };
 
-  const handleDelete = async (nameKey: string) => {
-    if (nameKey === "default") {
-      setError("默认工作区不可删除");
-      return;
-    }
-    if (!confirm(`确定取消注册工作区「${nameKey}」？不会删除服务器上的文件。`)) return;
-    setBusy(true);
+  // 删除分两档：仅取消注册（保留文件，走后端默认语义）/ 彻底删除（含服务器文件）。
+  // 先弹 Dialog 让用户选择，彻底删除再 window.confirm 二次确认（不可恢复）。
+  const [delTarget, setDelTarget] = useState<WorkspaceInfo | null>(null);
+  const [delBusy, setDelBusy] = useState<"unreg" | "delete" | null>(null);
+
+  const handleUnregisterOnly = async () => {
+    if (!delTarget) return;
+    const nameKey = delTarget.name_key;
+    setDelBusy("unreg");
     setError(null);
     setNotice(null);
     try {
       await unregisterWorkspace(nameKey);
-      setNotice("工作区已取消注册。");
+      setNotice(`工作区「${nameKey}」已取消注册（服务器文件保留）。`);
+      setDelTarget(null);
+      await refresh();
+      onChanged?.();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "取消失败");
+    } finally {
+      setDelBusy(null);
+    }
+  };
+
+  const handleDeleteWithFiles = async () => {
+    if (!delTarget) return;
+    const nameKey = delTarget.name_key;
+    if (
+      !window.confirm(
+        `确认彻底删除工作区「${nameKey}」？\n将连同服务器目录一起删除，不可恢复。\n\n路径：${delTarget.path}`
+      )
+    )
+      return;
+    setDelBusy("delete");
+    setError(null);
+    setNotice(null);
+    try {
+      await deleteWorkspace(nameKey);
+      setNotice(`工作区「${nameKey}」已彻底删除（含服务器文件）。`);
+      setDelTarget(null);
       await refresh();
       onChanged?.();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "删除失败");
     } finally {
-      setBusy(false);
+      setDelBusy(null);
     }
   };
 
@@ -312,7 +349,7 @@ export function WorkspacePanel({ active = true, onChanged }: WorkspacePanelProps
                     variant="ghost"
                     size="sm"
                     className="h-7 text-xs text-destructive hover:text-destructive"
-                    onClick={() => handleDelete(ws.name_key)}
+                    onClick={() => setDelTarget(ws)}
                     disabled={busy}
                   >
                     <Trash2 className="size-3" />
@@ -324,6 +361,66 @@ export function WorkspacePanel({ active = true, onChanged }: WorkspacePanelProps
         })
         )}
       </div>
+
+      {/* 删除工作区：二选一（仅取消注册 / 彻底删除含文件） */}
+      <Dialog
+        open={delTarget !== null}
+        onOpenChange={(o) => {
+          if (!o && !delBusy) setDelTarget(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              删除工作区「{delTarget?.name_key}」？
+            </DialogTitle>
+            <DialogDescription className="break-all text-xs">
+              {delTarget?.path}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-xs leading-relaxed text-muted-foreground">
+            <p>删除有两档，请选择：</p>
+            <p className="text-amber-600 dark:text-amber-500">
+              🗂 「仅取消注册」：从列表移除，服务器文件保留；之后可重新注册同一路径恢复。
+            </p>
+            <p className="text-destructive">
+              ⛔ 「彻底删除」：连同服务器目录（语义库 / 报告 / 中间数据）一起删除，
+              <b> 不可恢复</b>。
+            </p>
+            {delTarget && delTarget.name_key === activeName && (
+              <p className="text-destructive">
+                当前是活跃工作区：请先「激活」其它工作区，再执行彻底删除。
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDelTarget(null)}
+              disabled={!!delBusy}
+            >
+              取消
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleUnregisterOnly}
+              disabled={!!delBusy}
+            >
+              {delBusy === "unreg" ? "处理中..." : "仅取消注册"}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleDeleteWithFiles}
+              disabled={!!delBusy || delTarget?.name_key === activeName}
+            >
+              {delBusy === "delete" ? "删除中..." : "彻底删除"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
