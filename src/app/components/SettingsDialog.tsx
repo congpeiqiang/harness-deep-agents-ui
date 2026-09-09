@@ -24,6 +24,7 @@ import { ModelConfigPanel } from "@/app/components/ModelConfigDialog";
 import { DbConfigPanel } from "@/app/components/DbConfigDialog";
 import { SemanticLibraryPanel } from "@/app/components/SemanticLibraryPanel";
 import { WorkspacePanel } from "@/app/components/WorkspacePanel";
+import { EvalFlagsPanel } from "@/app/components/EvalFlagsPanel";
 import {
   Cpu,
   Database,
@@ -33,6 +34,7 @@ import {
   Server,
   BookOpen,
   Layers,
+  Gauge,
 } from "lucide-react";
 
 interface SettingsDialogProps {
@@ -43,7 +45,16 @@ interface SettingsDialogProps {
   onSaveConfig?: (config: StandaloneConfig) => void;
 }
 
-type TabId = "model" | "db" | "keywords" | "thinking" | "sql" | "semantic" | "workspace" | "deploy";
+type TabId =
+  | "model"
+  | "db"
+  | "keywords"
+  | "thinking"
+  | "sql"
+  | "eval"
+  | "semantic"
+  | "workspace"
+  | "deploy";
 
 interface TabDef {
   id: TabId;
@@ -57,6 +68,7 @@ const TABS: TabDef[] = [
   { id: "keywords", label: "关键词", icon: Search },
   { id: "thinking", label: "深度思考", icon: BrainCircuit },
   { id: "sql", label: "SQL审批", icon: ShieldCheck },
+  { id: "eval", label: "评估", icon: Gauge },
   { id: "semantic", label: "语义库", icon: BookOpen },
   { id: "workspace", label: "工作区", icon: Layers },
   { id: "deploy", label: "部署 URL和助手 ID", icon: Server },
@@ -241,6 +253,11 @@ export function SettingsDialog({
                 </div>
               </div>
             )}
+
+            <div className={cn("flex flex-col gap-3", activeTab !== "eval" && "hidden")}>
+              <h3 className="text-base font-semibold">评估</h3>
+              <EvalFlagsPanel active={activeTab === "eval"} />
+            </div>
 
             <div className={cn("flex flex-col gap-3", activeTab !== "semantic" && "hidden")}>
               <h3 className="text-base font-semibold">语义库</h3>
