@@ -19,6 +19,8 @@ import {
   FileIcon,
   Plus,
   Loader2,
+  Play,
+  RotateCw,
 } from "lucide-react";
 import { ChatMessage } from "@/app/components/ChatMessage";
 import type {
@@ -43,6 +45,11 @@ import { listThreadFeedback, type FeedbackRecord } from "@/lib/feedback";
 import { forkThread } from "@/lib/threadFork";
 import { decideSqlApproval, type SqlApprovalDecision } from "@/lib/sqlApproval";
 import { cancelTask } from "@/lib/cancelTask";
+import {
+  fetchThreadRunStatus,
+  TURN_STATUS_POLL_MS,
+  type ThreadRunStatus,
+} from "@/lib/threadRunStatus";
 import { SqlApprovalCard, type SqlApprovalPayload } from "@/app/components/SqlApprovalCard";
 import { generateAutoTitle, setThreadTitle } from "@/lib/threadMeta";
 import { useClient } from "@/providers/ClientProvider";
@@ -86,6 +93,22 @@ const lastAiMessageHasExplanation = (msgs: Message[]): boolean => {
 };
 // eslint-disable  MS80OmFIVnBZMlhrdUp2bG43bmx2TG82VVVSdWNnPT06YjFiOWU4MzE=
 
+// ── 「上一轮已中断」判据的前端镜像 ──
+// 与后端 thread_run_status._last_message_is_final 同构：有正文、且无 tool_calls 的
+// assistant 文本才算「终稿答复」。这里只用来决定「要不要去问后端」——真正的判定
+// 以后端四判据为准（见 src/lib/threadRunStatus.ts）。被打断的形态恰好是反例：
+// 最后一条是纯工具调用（如 write_todos）或 tool 结果。
+const isFinalAssistantMessage = (m: Message): boolean => {
+  if (m?.type !== "ai") return false;
+  const extra = m as unknown as {
+    tool_calls?: unknown[];
+    additional_kwargs?: { tool_calls?: unknown[] };
+  };
+  if (extra.tool_calls?.length) return false;
+  if (extra.additional_kwargs?.tool_calls?.length) return false;
+  return extractStringFromMessageContent(m).trim().length > 0;
+};
+
 export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const [metaOpen, setMetaOpen] = useState<"tasks" | "files" | null>(null);
   // 已完成任务汇总行展开控制
@@ -94,12 +117,12 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const [collapsedRunningIds, setCollapsedRunningIds] = useState<Set<string>>(new Set());
   // 子智能体进度卡片：追踪任务开始时间用于计算 elapsed
   const taskStartTimesRef = useRef<Map<string, number>>(new Map());
-  // 选库：持久化到 localStorage，会话间保持
+  // 选库：持久化到 localStorage，会话间保持；无历史值时留空（由 DatabaseSelector 显示 placeholder）
   const [selectedDb, setSelectedDb] = useState<string>(() => {
     try {
-      return localStorage.getItem("selectedDb") || "aix_report";
+      return localStorage.getItem("selectedDb") || "";
     } catch {
-      return "aix_report";
+      return "";
     }
   });
   // 选工作区：持久化到 localStorage
@@ -300,6 +323,70 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
       timers.clear();
     };
   }, []);
+
+  // ── 上一轮回复被外部打断（后端重启 / 进程被杀）→ 「已中断（可继续）」 ──
+  // 后端把「图停在半轮且没人在推」显式暴露为 turn_incomplete（四判据，见
+  // src/lib/threadRunStatus.ts）；前端只负责渲染 + 给一个继续按钮，不再永久转圈。
+  const [turnStatus, setTurnStatus] = useState<ThreadRunStatus | null>(null);
+  const [continuingTurn, setContinuingTurn] = useState(false);
+  // 后端回报「线程静止」（无活跃 run / 无中断 / 无审批）的连续次数：连续 3 次
+  // （≈12s，覆盖「run 刚发起尚未创建」的竞态）后停止轮询，避免空闲标签页长轮询。
+  const quiescentPollsRef = useRef(0);
+
+  // 最后一条消息是不是终稿答复——被打断时不是（停在工具调用/工具结果上）
+  const tailIsFinal = useMemo(() => {
+    const last = messages[messages.length - 1];
+    return Boolean(last) && isFinalAssistantMessage(last);
+  }, [messages]);
+  // 只在「可能有半轮挂在图上」时轮询：正在跑（流被掐断时 isLoading 会一直为 True）
+  // 或最后一条不是终稿答复。健康会话（终稿答复 + 空闲）一次都不轮询。
+  const shouldPollTurnStatus =
+    Boolean(threadId) &&
+    !isThreadLoading &&
+    (isLoading || queryInProgress || !tailIsFinal);
+  // 已得出结论（可继续 / 执行失败 / 等审批）→ 停止轮询，等用户动作或下一次 run
+  const turnStatusSettled =
+    turnStatus?.turn_incomplete === true ||
+    turnStatus?.turn_failed === true ||
+    turnStatus?.awaiting_interrupt === true;
+
+  useEffect(() => {
+    if (!threadId || isThreadLoading || !shouldPollTurnStatus || turnStatusSettled) {
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const st = await fetchThreadRunStatus(threadId);
+        if (cancelled) return;
+        quiescentPollsRef.current =
+          st.has_active_run || st.turn_incomplete || st.turn_failed || st.awaiting_interrupt
+            ? 0
+            : quiescentPollsRef.current + 1;
+        setTurnStatus(st);
+      } catch {
+        // fail-closed：读不到就保留上一次结论、绝不下新的判断（后端同样 fail-closed）
+        if (!cancelled) quiescentPollsRef.current = 0;
+      }
+    };
+    void tick();
+    const timer = setInterval(() => {
+      if (quiescentPollsRef.current >= 3) {
+        clearInterval(timer);
+        return;
+      }
+      void tick();
+    }, TURN_STATUS_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [threadId, isThreadLoading, shouldPollTurnStatus, turnStatusSettled]);
+
+  // 新 run 开始（isLoading 翻转）→ 清掉上一次的中断结论，别在运行中挂着旧横幅
+  useEffect(() => {
+    if (isLoading) setTurnStatus(null);
+  }, [isLoading]);
 
   const pendingApprovals = useMemo(() => {
     if (!asyncTasks || typeof asyncTasks !== "object") return [];
@@ -629,6 +716,37 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     },
     [handleSubmit, submitDisabled]
   );
+
+  // 「继续」：把被外部打断的那一轮推完。
+  // 先 stopStream 清掉可能残留的假运行态——重启把 run 打死时流是被掐断的（没有
+  // 终态事件），isLoading 会一直为 True，此时直接 sendMessage 会被当成并发运行。
+  // 上一轮 run 已死时 stop 会报错（无活跃流），吞掉即可，不影响继续。
+  // 续跑用普通用户消息（不带 checkpoint_id）：后端从当前 head 继跑，不会被
+  // 旧 checkpoint 分叉（前端自动续跑带过期 checkpoint_id 的坑见 memory）。
+  const handleContinueTurn = useCallback(async () => {
+    if (continuingTurn || submitDisabled) return;
+    setContinuingTurn(true);
+    try {
+      if (isLoading) {
+        try {
+          await stopStream();
+        } catch {
+          /* 上一轮 run 已死，没有活跃流可停 */
+        }
+      }
+      const configurable: Record<string, string> = { db_name: selectedDb };
+      if (selectedProvider) configurable.llm_route = selectedProvider;
+      if (selectedModel) configurable.llm_model = selectedModel;
+      configurable.enable_thinking = getEnableThinking() ? "true" : "false";
+      setTurnStatus(null); // 乐观收起横幅，等新一轮的真实状态
+      sendMessage("继续", [], configurable);
+    } finally {
+      setContinuingTurn(false);
+    }
+  }, [
+    continuingTurn, submitDisabled, isLoading, stopStream, sendMessage,
+    selectedDb, selectedModel, selectedProvider,
+  ]);
 
   // TODO: can we make this part of the hook?
   const messageUiMap = useMemo(() => {
@@ -1075,6 +1193,83 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* 上一轮终态失败（模型 400 / 超时等）→ 给出原因 + 「重试」。
+                  与下面的「已中断」互斥（后端让位）：新建会话第一轮被模型 400 打回时
+                  state 形状与「被打断」几乎一样，只有 run 终态能区分，否则用户点
+                  「继续」只是把同一个必失败的请求再发一遍，且看不到原因。 */}
+              {turnStatus?.turn_failed === true && (
+                <div className="flex flex-col gap-1 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
+                  <div className="flex items-center gap-2 text-destructive">
+                    <AlertCircle size={15} className="shrink-0" />
+                    <span className="font-medium">上一轮执行失败（未完成）</span>
+                  </div>
+                  <div className="pl-6 text-xs text-muted-foreground">
+                    本轮不是被外部中断，而是执行中报错退出。
+                    {turnStatus.last_error
+                      ? "失败原因："
+                      : "后端未留下失败原因，可在侧边栏任务详情查看。"}
+                  </div>
+                  {turnStatus.last_error && (
+                    <div className="break-words pl-6 font-mono text-xs text-destructive/90">
+                      {turnStatus.last_error}
+                    </div>
+                  )}
+                  <div className="pl-6 text-xs text-muted-foreground">
+                    点「重试」会从断点接着执行，已产生的查询结果与文件不会丢失；
+                    若原因与模型配置有关（例如模型名不被服务商支持），请先在模型配置里
+                    修正，否则重试会以同样方式失败。
+                  </div>
+                  <div className="pl-6 pt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1.5 px-2.5 text-xs"
+                      disabled={continuingTurn || submitDisabled}
+                      onClick={handleContinueTurn}
+                    >
+                      {continuingTurn ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <RotateCw size={13} />
+                      )}
+                      重试
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* 上一轮回复被外部打断（后端重启 / 进程被杀）→ 给出「继续」而不是永久转圈 */}
+              {turnStatus?.turn_incomplete === true && (
+                <div className="flex flex-col gap-1 rounded-xl border border-amber-300/60 bg-amber-500/10 px-3 py-2 text-sm">
+                  <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                    <AlertCircle size={15} className="shrink-0" />
+                    <span className="font-medium">上一轮回复已中断（未完成）</span>
+                  </div>
+                  <div className="pl-6 text-xs text-muted-foreground">
+                    服务重启或任务被外部中断，智能体没有跑完这一轮。点击「继续」接着执行，
+                    已产生的查询结果与文件不会丢失。
+                  </div>
+                  <div className="pl-6 pt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1.5 px-2.5 text-xs"
+                      disabled={continuingTurn || submitDisabled}
+                      onClick={handleContinueTurn}
+                    >
+                      {continuingTurn ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Play size={13} />
+                      )}
+                      继续
+                    </Button>
+                  </div>
                 </div>
               )}
             </>

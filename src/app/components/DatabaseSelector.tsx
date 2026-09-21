@@ -16,12 +16,6 @@ interface Props {
   onChange: (v: string) => void;
 }
 
-// 后端拉取失败时回退的默认库（与 .env 迁移前一致）
-const FALLBACK_DBS: DbInfo[] = [
-  { name: "aix_report", db_type: "mysql", host: "", port: 0, database: "", user: "" },
-  { name: "Chinook_AutoIncrement", db_type: "mysql", host: "", port: 0, database: "", user: "" },
-];
-
 const typeLabel = (t: string): string => (t || "mysql").toUpperCase();
 
 export function DatabaseSelector({ value, onChange }: Props) {
@@ -31,11 +25,11 @@ export function DatabaseSelector({ value, onChange }: Props) {
   const refresh = useCallback(async () => {
     try {
       const list = await listDatabases();
-      setDbs(list.length > 0 ? list : FALLBACK_DBS);
+      setDbs(list);
       setError(false);
     } catch (e) {
       console.error("[DB_SELECT] 拉取数据库列表失败:", e);
-      setDbs(FALLBACK_DBS);
+      setDbs([]);
       setError(true);
     }
   }, []);
@@ -56,16 +50,15 @@ export function DatabaseSelector({ value, onChange }: Props) {
     const onWsChanged = async () => {
       try {
         const list = await listDatabases();
-        const resolved = list.length > 0 ? list : FALLBACK_DBS;
-        setDbs(resolved);
+        setDbs(list);
         setError(false);
         // 自动选中新工作区的第一个库，避免旧工作区的库名残留
-        if (resolved.length > 0) {
-          onChange(resolved[0].name);
+        if (list.length > 0) {
+          onChange(list[0].name);
         }
       } catch (e) {
         console.error("[DB_SELECT] 工作区切换后拉取数据库列表失败:", e);
-        setDbs(FALLBACK_DBS);
+        setDbs([]);
         setError(true);
       }
     };
@@ -73,10 +66,17 @@ export function DatabaseSelector({ value, onChange }: Props) {
     return () => window.removeEventListener("workspace-changed", onWsChanged);
   }, [onChange]);
 
-  const list = dbs ?? FALLBACK_DBS;
+  const list = dbs ?? [];
   const current = list.find((d) => d.name === value);
 
-  const tooltipText = error ? "配置服务不可用，显示默认库" : "切换数据库";
+  // 当选中的库不在列表中时（如删除了所有数据库），自动清空选中值
+  useEffect(() => {
+    if (dbs !== null && value && !list.find((d) => d.name === value)) {
+      onChange("");
+    }
+  }, [dbs, value, list, onChange]);
+
+  const tooltipText = error ? "配置服务不可用" : "切换数据库";
 
   return (
     <Select value={value} onValueChange={onChange}>

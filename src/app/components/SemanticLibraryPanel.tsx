@@ -24,15 +24,19 @@ import {
   buildSemanticProject,
   validateSemanticProject,
   importSemanticFromGit,
+  adoptSemanticFromGit,
   associateLocalProject,
   pushToGit,
   getGitStatus,
   gitPull,
+  getGitRefs,
   getGitSshKey,
   openProjectDirectory,
   type SemanticProject,
   type IntrospectTable,
   type IntrospectForeignKey,
+  type GitRefsInfo,
+  type GitStatusInfo,
 } from "@/lib/semanticApi";
 
 interface DbInfo {
@@ -87,6 +91,11 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
   const [gitRef, setGitRef] = useState("");
   const [gitProjName, setGitProjName] = useState("");
   const [gitTargetDb, setGitTargetDb] = useState("");
+  // Git 导入撞上同名本地语义库：后端回 code="exists"，这里存待确认替换的信息
+  const [gitReplaceFiles, setGitReplaceFiles] = useState<string[] | null>(null);
+
+  // 接入 Git：非 Git 的本地语义库绑定并拉取一个已有远程仓库（与「更新」同一个对话框）
+  const [adoptUrl, setAdoptUrl] = useState("");
 
   // 关联本地
   const [localPath, setLocalPath] = useState("");
@@ -175,7 +184,7 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
     if (!window.confirm(`确认删除「${projectName}」？不可恢复。`)) return;
     await runOp(`delete-${name}`, async () => {
       await deleteSemanticProject(name);
-      setNotice(`已删除「${projectName}」。重启后端后 Wren 语义工具自动卸载。`);
+      setNotice(`已删除「${projectName}」。Wren 语义工具已自动卸载。`);
       onChanged?.();
       await refresh();
     });
@@ -198,10 +207,79 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
     });
   };
 
-  const doGitPull = async (name: string, projectName: string) => {
-    await runOp(`pull-${name}`, async () => {
-      const r = await gitPull(name);
-      setNotice(`「${projectName}」${r.message || "更新完成"}`);
+  // 更新语义库：先选 ref（分支/tag，默认「最新」= 远程默认分支），可选更新后自动构建。
+  // 不自动构建时给出提示——wrenai 读的是 target/mdl.json，源文件改动不构建不生效。
+  const [pullTarget, setPullTarget] = useState<SemanticProject | null>(null);
+  const [pullRef, setPullRef] = useState("");
+  const [pullAutoBuild, setPullAutoBuild] = useState(true);
+  // 非 Git 模式下后端回 code="local_content"（本地有自建内容）后置 true：
+  // 状态预检可能失败或用户期间又改了文件，所以以「后端真的拒绝过一次」为兜底判据。
+  const [adoptNeedsConfirm, setAdoptNeedsConfirm] = useState(false);
+
+  const openPull = (p: SemanticProject) => {
+    setPullRef("");
+    setPullAutoBuild(true);
+    setAdoptUrl("");
+    setAdoptNeedsConfirm(false);
+    setPullTarget(p);
+  };
+
+
+  // discardLocal：用户在对话框里显式勾了「放弃本地未提交改动」（后端会先 stash 备份）
+  const doGitPull = async (discardLocal: boolean) => {
+    const p = pullTarget;
+    if (!p) return;
+    await runOp(`pull-${p.name}`, async () => {
+      const r = await gitPull(p.name, pullRef || undefined, discardLocal);
+      let msg = `「${p.project_name}」${r.message || "更新完成"}`;
+      if (r.changed && pullAutoBuild) {
+        try {
+          const b = await buildSemanticProject(p.name);
+          msg += `\n${b.message}`;
+        } catch (e) {
+          msg += `\n构建失败：${(e as Error).message}（可稍后手动点「构建」）`;
+        }
+      }
+      setNotice(msg);
+      setPullTarget(null);
+      await refresh();
+    });
+  };
+
+  // 接入 Git：把已有本地语义库接管到远程仓库（备份本地 → 干净 clone → 构建）。
+  // 本地有自建内容时后端回 ok:false/code:"local_content" 且**不动任何文件**，
+  // 用户勾确认后再带 discard_local 重发（内容只备份不删）。
+  const doGitAdopt = async (discardLocal: boolean) => {
+    const p = pullTarget;
+    if (!p) return;
+    const repoUrl = adoptUrl.trim();
+    if (!repoUrl) {
+      setError("请填写 Git 仓库地址");
+      return;
+    }
+    await runOp(`adopt-${p.name}`, async () => {
+      const r = await adoptSemanticFromGit(p.name, {
+        repo_url: repoUrl,
+        ref: pullRef.trim() || undefined,
+        discard_local: discardLocal,
+        build: pullAutoBuild,
+      });
+      if (!r.ok) {
+        if (r.code === "local_content") {
+          // 让对话框把确认勾选显出来（并保持打开，用户勾完直接重发）
+          setAdoptNeedsConfirm(true);
+        }
+        setError(r.error || "接入失败");
+        return;
+      }
+      let msg = `「${p.project_name}」已接入 Git 仓库`;
+      if (r.build_note) msg += `\n${r.build_note}`;
+      if (r.backup_dir) msg += `\n原内容已备份到：${r.backup_dir}`;
+      if (r.warnings?.length) msg += `\n${r.warnings.join("\n")}`;
+      setNotice(msg);
+      setAdoptNeedsConfirm(false);
+      setPullTarget(null);
+      onChanged?.();
       await refresh();
     });
   };
@@ -304,7 +382,7 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
         return;
       }
       await associateLocalProject(proj.path, createDbName);
-      setNotice(`已关联到「${createDbName}」。重启后端后 Wren 语义工具自动加载。`);
+      setNotice(`已关联到「${createDbName}」。Wren 语义工具已自动加载。`);
       setCreateStep(4);
       onChanged?.();
       await refresh();
@@ -334,7 +412,8 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
 
   // ── Git 导入 ──────────────────────────────────────────────
 
-  const doGitImport = async () => {
+  // replaceExisting=true 表示用户已在确认框上确认「用仓库内容替换同名本地语义库」
+  const doGitImport = async (replaceExisting = false) => {
     if (!gitUrl.trim()) {
       setError("请填写 Git 仓库地址");
       return;
@@ -346,16 +425,25 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
         project_name: gitProjName.trim() || undefined,
         target_db: gitTargetDb || undefined,
         overwrite_connection: true,
+        replace_existing: replaceExisting,
       });
       if (!r.ok) {
+        // 同名本地语义库已存在：后端回 2xx + code="exists"（没动任何文件），
+        // 让用户确认后再带 replace_existing 重发，而不是吃一句死错误
+        if (r.code === "exists") {
+          setGitReplaceFiles(r.local_files || []);
+          setNotice(r.error || "同名语义库已存在");
+          return;
+        }
         setError(r.error || "拉取失败");
         return;
       }
-      setNotice(`已拉取「${r.project?.project_name || ""}」。重启后端后 Wren 语义工具生效。`);
+      setNotice(`已拉取「${r.project?.project_name || ""}」${r.build_note ? `。${r.build_note}` : ""}`);
       setGitUrl("");
       setGitRef("");
       setGitProjName("");
       setGitTargetDb("");
+      setGitReplaceFiles(null);
       setAddMode(null);
       onChanged?.();
       await refresh();
@@ -371,7 +459,7 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
     }
     await runOp("local-associate", async () => {
       await associateLocalProject(localPath.trim(), localTargetDb);
-      setNotice("已关联。重启后端后 Wren 语义工具生效。");
+      setNotice("已关联。Wren 语义工具已自动生效。");
       setLocalPath("");
       setLocalTargetDb("");
       setAddMode(null);
@@ -476,7 +564,7 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
                 setPushCommitMsg("");
                 setAddMode("push");
               }}
-              onPull={() => doGitPull(p.name, p.project_name)}
+              onPull={() => openPull(p)}
               onOpenDir={() => doOpenDir(p.name)}
               tables={introspectData?.tables}
               onSaved={() => refresh()}
@@ -506,7 +594,10 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
                   resetCreate();
                   setAddMode("manual");
                 }}
-                onGit={() => setAddMode("git")}
+                onGit={() => {
+                  setGitReplaceFiles(null);
+                  setAddMode("git");
+                }}
                 onLocal={() => setAddMode("local")}
                 onClose={() => setAddMode(null)}
               />
@@ -548,14 +639,26 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
                 projName={gitProjName}
                 targetDb={gitTargetDb}
                 dbOptions={dbOptions}
+                replaceFiles={gitReplaceFiles}
                 busy={busy}
                 busyOp={busyOp}
                 onSetUrl={setGitUrl}
                 onSetRef={setGitRef}
-                onSetProjName={setGitProjName}
+                onSetProjName={(v) => {
+                  // 改了目标名字就不再是「替换那个同名库」了，撤掉确认态
+                  setGitProjName(v);
+                  setGitReplaceFiles(null);
+                }}
                 onSetTargetDb={setGitTargetDb}
                 onImport={doGitImport}
-                onClose={() => setAddMode(null)}
+                onCancelReplace={() => {
+                  setGitReplaceFiles(null);
+                  setNotice(null);
+                }}
+                onClose={() => {
+                  setGitReplaceFiles(null);
+                  setAddMode(null);
+                }}
               />
             )}
             {addMode === "local" && (
@@ -589,6 +692,47 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
                 onClose={() => setAddMode(null)}
               />
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 更新 / 接入 Git：Git 库选 ref（分支/tag，默认最新）；本地库填仓库地址 */}
+      {pullTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          {/* 接入模式内容较高（仓库地址 + 自建文件清单 + 确认 + 构建勾选），
+              小屏要能滚，否则底部按钮会被挤出视口点不到 */}
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border bg-background p-4 shadow-lg">
+            {error && (
+              <div className="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {error}
+              </div>
+            )}
+            <PullGitDialog
+              name={pullTarget.name}
+              projectName={pullTarget.project_name}
+              isGit={pullTarget.source === "git"}
+              currentBranch={pullTarget.git?.branch || ""}
+              currentCommit={pullTarget.git?.commit || ""}
+              repoUrl={adoptUrl}
+              ref_={pullRef}
+              autoBuild={pullAutoBuild}
+              needsConfirm={adoptNeedsConfirm}
+              busy={busy}
+              busyOp={busyOp}
+              onSetRepoUrl={setAdoptUrl}
+              onSetRef={setPullRef}
+              onSetAutoBuild={setPullAutoBuild}
+              onPull={doGitPull}
+              onAdopt={doGitAdopt}
+              onClose={() => {
+                if (
+                  busyOp === `pull-${pullTarget.name}` ||
+                  busyOp === `adopt-${pullTarget.name}`
+                )
+                  return;
+                setPullTarget(null);
+              }}
+            />
           </div>
         </div>
       )}
@@ -631,6 +775,7 @@ function ProjectCard({
   const myBuildBusy = busyOp === `build-${p.name}`;
   const myValidateBusy = busyOp === `validate-${p.name}`;
   const myPullBusy = busyOp === `pull-${p.name}`;
+  const myAdoptBusy = busyOp === `adopt-${p.name}`;
   const myDeleteBusy = busyOp === `delete-${p.name}`;
 
   return (
@@ -730,17 +875,22 @@ function ProjectCard({
           >
             📤 推送 Git
           </Button>
-          {isGit && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={onPull}
-              disabled={myPullBusy}
-            >
-              {myPullBusy ? "更新中..." : "🔄 更新"}
-            </Button>
-          )}
+          {/* 本地库也走这个入口：接上 git 上已有的同名语义库（之后卡片就变成 Git） */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onPull}
+            disabled={myPullBusy || myAdoptBusy}
+          >
+            {isGit
+              ? myPullBusy
+                ? "更新中..."
+                : "🔄 更新"
+              : myAdoptBusy
+                ? "接入中..."
+                : "🔗 接入 Git"}
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -1099,6 +1249,7 @@ function GitImportDialog({
   projName,
   targetDb,
   dbOptions,
+  replaceFiles,
   busy,
   busyOp,
   onSetUrl,
@@ -1106,6 +1257,7 @@ function GitImportDialog({
   onSetProjName,
   onSetTargetDb,
   onImport,
+  onCancelReplace,
   onClose,
 }: {
   url: string;
@@ -1113,15 +1265,23 @@ function GitImportDialog({
   projName: string;
   targetDb: string;
   dbOptions: string[];
+  /** 非空 = 后端报「同名本地语义库已存在」，这里是会被替换掉的本地自建文件 */
+  replaceFiles: string[] | null;
   busy: boolean;
   busyOp: string;
   onSetUrl: (v: string) => void;
   onSetRef: (v: string) => void;
   onSetProjName: (v: string) => void;
   onSetTargetDb: (v: string) => void;
-  onImport: () => void;
+  onImport: (replaceExisting: boolean) => void;
+  onCancelReplace: () => void;
   onClose: () => void;
 }) {
+  const [replaceOk, setReplaceOk] = useState(false);
+  useEffect(() => {
+    setReplaceOk(false);
+  }, [replaceFiles]);
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -1185,9 +1345,55 @@ function GitImportDialog({
             </SelectContent>
           </Select>
         </div>
-        <div className="flex justify-end">
-          <Button size="sm" onClick={onImport} disabled={busy || !url.trim()}>
-            {busyOp === "git-import" ? "拉取中..." : "拉取"}
+        {replaceFiles && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-2 py-1.5 text-[11px] leading-relaxed text-amber-600">
+            <div className="font-medium">
+              ⚠ 「{projName.trim() || "该名称"}」下已有本地语义库，拉取会用仓库内容替换它
+              {replaceFiles.length > 0 ? `（${replaceFiles.length} 个自建文件）` : ""}
+            </div>
+            {replaceFiles.length > 0 && (
+              <ul className="mt-1 list-disc pl-4 font-mono break-all">
+                {replaceFiles.slice(0, 5).map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+                {replaceFiles.length > 5 && <div>…共 {replaceFiles.length} 个</div>}
+              </ul>
+            )}
+            <div className="mt-1 text-amber-600/80">
+              原文件会整体备份到该库目录下的备份文件夹（不删除），需要时可拷回。
+            </div>
+          </div>
+        )}
+        {replaceFiles && (
+          <div className="flex items-center gap-2 rounded border border-dashed border-destructive/40 px-2 py-1.5">
+            <input
+              id="git-import-replace"
+              type="checkbox"
+              checked={replaceOk}
+              onChange={(e) => setReplaceOk(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            <Label htmlFor="git-import-replace" className="text-xs">
+              确认用仓库内容替换本地语义库（先备份，不删除）
+            </Label>
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          {replaceFiles && (
+            <Button variant="outline" size="sm" onClick={onCancelReplace} disabled={busy}>
+              换个名字
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={() => onImport(!!replaceFiles)}
+            disabled={busy || !url.trim() || (!!replaceFiles && !replaceOk)}
+          >
+            {busyOp === "git-import"
+              ? "拉取中..."
+              : replaceFiles
+                ? "替换并拉取"
+                : "拉取"}
           </Button>
         </div>
       </div>
@@ -1270,6 +1476,304 @@ function LocalAssociateDialog({
             {busyOp === "local-associate" ? "关联中..." : "关联"}
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 更新语义库对话框（选分支 / tag）─────────────────────────
+
+const LATEST_SENTINEL = "__latest__";
+
+function PullGitDialog({
+  name,
+  projectName,
+  isGit,
+  currentBranch,
+  currentCommit,
+  repoUrl,
+  ref_,
+  autoBuild,
+  needsConfirm,
+  busy,
+  busyOp,
+  onSetRepoUrl,
+  onSetRef,
+  onSetAutoBuild,
+  onPull,
+  onAdopt,
+  onClose,
+}: {
+  name: string;
+  projectName: string;
+  /** false = 本地新建的库，本对话框是「接入 Git」模式（先绑远程仓库再拉） */
+  isGit: boolean;
+  currentBranch: string;
+  currentCommit: string;
+  repoUrl: string;
+  ref_: string;
+  autoBuild: boolean;
+  /** 本地库有自建内容，需用户勾确认才放行（后端会备份，不删） */
+  needsConfirm: boolean;
+  busy: boolean;
+  busyOp: string;
+  onSetRepoUrl: (v: string) => void;
+  onSetRef: (v: string) => void;
+  onSetAutoBuild: (v: boolean) => void;
+  onPull: (discardLocal: boolean) => void;
+  onAdopt: (discardLocal: boolean) => void;
+  onClose: () => void;
+}) {
+  const [refs, setRefs] = useState<GitRefsInfo | null>(null);
+  const [refsErr, setRefsErr] = useState<string | null>(null);
+  // 打开对话框就预检本地改动：不让用户点了「更新」才吃一句拒绝（后端护栏是
+  // 宁可拒绝也不覆盖，本地脏了按钮就是死路 —— 2026-09-15 生产反馈）
+  const [status, setStatus] = useState<GitStatusInfo | null>(null);
+  const [statusErr, setStatusErr] = useState<string | null>(null);
+  const [discardLocal, setDiscardLocal] = useState(false);
+  const myBusy = busy && busyOp === (isGit ? `pull-${name}` : `adopt-${name}`);
+
+  useEffect(() => {
+    let alive = true;
+    setRefs(null);
+    setRefsErr(null);
+    setStatus(null);
+    setStatusErr(null);
+    setDiscardLocal(false);
+    // 还没绑 git 的库取不到远程 ref（后端直接 400），别白跑一趟
+    if (isGit) {
+      getGitRefs(name)
+        .then((r) => {
+          if (alive) setRefs(r);
+        })
+        .catch((e: Error) => {
+          if (alive) setRefsErr(e.message);
+        });
+    }
+    getGitStatus(name)
+      .then((r) => {
+        if (alive) setStatus(r);
+      })
+      .catch((e: Error) => {
+        if (alive) setStatusErr(e.message);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [name, isGit]);
+
+  const isTag = !!refs && refs.tags.some((t) => t.name === ref_);
+  // 只有「会拦住更新的已跟踪文件改动」才算挡路（未跟踪文件不拦，别误报）
+  const localChanges = status?.local_changes || [];
+  const blockedByLocal = localChanges.length > 0;
+  // 未绑 git 时：本地自建内容（target/ 构建产物也算）会被仓库版本整个替换，
+  // 所以状态预检说「不是空骨架」就要确认；预检失败或后端已拒绝过一次也一律要确认。
+  const adoptLocalFiles = status?.adopt_local_files || [];
+  const statusPending = !status && !statusErr;
+  const confirmContent =
+    needsConfirm || statusPending || !status?.adopt_pristine || !!statusErr;
+  const canRun = isGit
+    ? !myBusy && (!blockedByLocal || discardLocal)
+    : !myBusy &&
+      !!repoUrl.trim() &&
+      (!confirmContent || discardLocal);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">
+          {isGit ? `🔄 更新「${projectName}」` : `🔗 接入 Git「${projectName}」`}
+        </h3>
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+        >
+          ✕
+        </button>
+      </div>
+
+      {isGit ? (
+        <div className="rounded-md border bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+          当前：{currentBranch || "detached"}@{currentCommit || "?"}
+          {refs?.default_branch ? ` 远程默认分支：${refs.default_branch}` : ""}
+        </div>
+      ) : (
+        <div className="grid gap-1">
+          <Label className="text-xs">仓库地址（http/https/ssh）*</Label>
+          <Input
+            className="h-8 text-xs"
+            value={repoUrl}
+            onChange={(e) => onSetRepoUrl(e.target.value)}
+            placeholder="https://gitlab.example.com/team/xxx_semantic.git"
+            disabled={myBusy}
+          />
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            绑定后本库的源文件以仓库为准；之后卡片上会变成「Git」，用「🔄 更新」跟进远程改动。
+          </p>
+        </div>
+      )}
+
+      {blockedByLocal && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-[11px] leading-relaxed text-destructive">
+          <div className="font-medium">
+            ⚠ 本地有 {localChanges.length} 个文件未提交，直接更新会被拒绝（不会覆盖你的改动）
+          </div>
+          <ul className="mt-1 list-disc pl-4 font-mono break-all">
+            {localChanges.slice(0, 5).map((f) => (
+              <li key={f}>{f}</li>
+            ))}
+          </ul>
+          {localChanges.length > 5 && <div>…共 {localChanges.length} 个</div>}
+          <div className="mt-1 text-destructive/80">
+            建议先「推送 Git」把改动提交到远程；不想保留则勾选下方选项，后端会先
+            <code className="mx-0.5">git stash</code>备份再更新。
+          </div>
+        </div>
+      )}
+      {!isGit && statusPending && (
+        <div className="text-[11px] text-muted-foreground">读取本地内容…</div>
+      )}
+      {!isGit && !needsConfirm && !statusPending && confirmContent && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-2 py-1.5 text-[11px] leading-relaxed text-amber-600">
+          <div className="font-medium">
+            本库已有自建内容，接入后会以仓库版本替换
+            {status?.adopt_built ? "（含已构建的 target/）" : ""}
+          </div>
+          {adoptLocalFiles.length > 0 && (
+            <ul className="mt-1 list-disc pl-4 font-mono break-all">
+              {adoptLocalFiles.slice(0, 5).map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+              {adoptLocalFiles.length > 5 && <div>…共 {adoptLocalFiles.length} 个</div>}
+            </ul>
+          )}
+          <div className="mt-1 text-amber-600/80">
+            确认后这些文件会被整体备份到库目录下的备份文件夹（不删除），需要时可拷回。
+          </div>
+        </div>
+      )}
+      {!isGit && !statusPending && !confirmContent && (
+        <div className="text-[11px] text-muted-foreground">
+          （本库还没有自建内容，可直接接入）
+        </div>
+      )}
+      {!isGit && statusErr && (
+        <div className="text-[11px] text-muted-foreground">
+          （无法预检本地内容：{statusErr}，将按「有自建内容」处理）
+        </div>
+      )}
+
+      {((isGit && blockedByLocal) || (!isGit && confirmContent)) && (
+        <div className="flex items-center gap-2 rounded border border-dashed border-destructive/40 px-2 py-1.5">
+          <input
+            id="pull-discard-local"
+            type="checkbox"
+            checked={discardLocal}
+            onChange={(e) => setDiscardLocal(e.target.checked)}
+            className="h-3.5 w-3.5"
+          />
+          <Label htmlFor="pull-discard-local" className="text-xs">
+            {isGit
+              ? "放弃本地未提交改动并更新（先自动 git stash 备份，可用 git stash pop 找回）"
+              : "确认用仓库内容替换本地自建内容（后端会先备份，不会删除）"}
+          </Label>
+        </div>
+      )}
+
+      <div className="grid gap-1">
+        <Label className="text-xs">{isGit ? "更新到" : "拉取（分支/Tag，留空 = 默认分支）"}</Label>
+        {!isGit ? (
+          <Input
+            className="h-8 text-xs"
+            value={ref_}
+            onChange={(e) => onSetRef(e.target.value)}
+            placeholder="main / v1.0"
+            disabled={myBusy}
+          />
+        ) : refsErr ? (
+          <div className="text-[11px] text-destructive">
+            ⚠ 读取远程分支/tag 失败：{refsErr}（仍可尝试更新到「最新」）
+          </div>
+        ) : !refs ? (
+          <div className="text-[11px] text-muted-foreground">读取远程分支/tag…</div>
+        ) : (
+          <Select
+            value={ref_ || LATEST_SENTINEL}
+            onValueChange={(v) => onSetRef(v === LATEST_SENTINEL ? "" : v)}
+            disabled={myBusy}
+          >
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue placeholder="最新" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={LATEST_SENTINEL}>
+                最新（默认分支{refs.default_branch ? `：${refs.default_branch}` : ""}）
+              </SelectItem>
+              {refs.branches.map((b) => (
+                <SelectItem key={`b-${b.name}`} value={b.name}>
+                  分支 {b.name}@{b.sha.slice(0, 7)}
+                </SelectItem>
+              ))}
+              {refs.tags.map((t) => (
+                <SelectItem key={`t-${t.name}`} value={t.name}>
+                  Tag {t.name}@{t.sha.slice(0, 7)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {isGit ? (
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {isTag
+              ? "Tag：detached 检出该版本（不跟随分支后续提交）。"
+              : "分支：本地同名分支重置到远程最新；本地未推送提交 / 未提交改动会被拒绝，不会静默覆盖。"}
+            {status && status.has_local_changes && !blockedByLocal
+              ? "（本地只有未跟踪文件 / 构建产物改动，不影响更新）"
+              : ""}
+          </p>
+        ) : (
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            填了分支/Tag 就检出该版本（Tag 为 detached）；留空取仓库默认分支最新。
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 rounded border border-dashed px-2 py-1.5">
+        <input
+          id="pull-autobuild"
+          type="checkbox"
+          checked={autoBuild}
+          onChange={(e) => onSetAutoBuild(e.target.checked)}
+          className="h-3.5 w-3.5"
+        />
+        <Label htmlFor="pull-autobuild" className="text-xs">
+          {isGit ? "更新后自动构建 MDL" : "接入后自动构建 MDL"}（metadata / 知识改动需构建才生效）
+        </Label>
+      </div>
+
+      <div className="text-[11px] leading-relaxed text-muted-foreground">
+        {isGit ? "更新" : "接入"}只换源文件；wrenai 实际读的是{" "}
+        <code>target/mdl.json</code>。构建后即刻生效，无需重启后端。
+      </div>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onClose} disabled={myBusy}>
+          取消
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => (isGit ? onPull(discardLocal) : onAdopt(discardLocal))}
+          disabled={!canRun}
+        >
+          {isGit
+            ? myBusy
+              ? "更新中..."
+              : "更新"
+            : myBusy
+              ? "接入中..."
+              : "接入并拉取"}
+        </Button>
       </div>
     </div>
   );
