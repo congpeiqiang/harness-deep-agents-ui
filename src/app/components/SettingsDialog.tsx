@@ -16,7 +16,7 @@ import type { ComponentType, CustomEvent } from "react";
 import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import { DEFAULT_QUERY_KEYWORDS, getConfig, saveConfig } from "@/lib/config";
+import { DEFAULT_QUERY_KEYWORDS, getConfig, getQueryKeywords, saveConfig } from "@/lib/config";
 import type { StandaloneConfig } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 import {
