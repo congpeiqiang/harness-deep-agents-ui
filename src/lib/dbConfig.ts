@@ -432,7 +432,12 @@ export async function testDatabase(
     body: payload ? JSON.stringify(payload) : undefined,
   });
   // 测试失败时后端返回 400 + {ok:false,message}，仍要解析出 message
+  // Starlette HTTPException 返回 {detail: "..."}，需兼容
   const j = await res.json().catch(() => ({ ok: false, message: `HTTP ${res.status}` }));
+  if (!res.ok) {
+    const msg = (j as any).detail || (j as any).message || `HTTP ${res.status}`;
+    return { ok: false, message: msg };
+  }
   return j as { ok: boolean; message: string };
 }
 
