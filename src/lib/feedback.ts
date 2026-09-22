@@ -56,6 +56,7 @@ export async function putFeedback(
   const res = await fetch(fbUrl(threadId, messageId), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(payload),
   });
   const j = await handle<{ ok: boolean; feedback: FeedbackRecord }>(res);
@@ -70,6 +71,7 @@ export async function deleteFeedback(
 ): Promise<void> {
   const res = await fetch(fbUrl(threadId, messageId), {
     method: "DELETE",
+    credentials: "include",
     headers: ifVersion != null ? { "Content-Type": "application/json" } : undefined,
     body: ifVersion != null ? JSON.stringify({ if_version: ifVersion }) : undefined,
   });
@@ -82,7 +84,7 @@ export async function listThreadFeedback(
 ): Promise<FeedbackRecord[]> {
   const res = await fetch(
     `${apiBase()}/api/threads/${encodeURIComponent(threadId)}/feedback`,
-    { cache: "no-store" }
+    { cache: "no-store", credentials: "include" }
   );
   const j = await handle<{ feedback: FeedbackRecord[] }>(res);
   return j.feedback || [];
