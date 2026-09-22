@@ -177,7 +177,9 @@ export function UserManagementPanel({ active }: UserManagementPanelProps) {
         params.is_admin = formIsAdmin;
       }
       if (Object.keys(params).length === 0) {
-        toast.info("没有修改");
+        // 没有密码/显示名/管理员权限变更，但数据库授权可能已即时保存
+        setEditOpen(false);
+        setTargetUser(null);
         setSaving(false);
         return;
       }
