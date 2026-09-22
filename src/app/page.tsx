@@ -59,7 +59,8 @@ function HomePageInner({
       try {
         const base = (config.deploymentUrl || "http://localhost:2026").replace(/\/+$/, "");
         const res = await fetch(
-          `${base}/threads/${encodeURIComponent(threadId)}/state`
+          `${base}/threads/${encodeURIComponent(threadId)}/state`,
+          { credentials: "include" }
         );
         if (cancelled) return;
         if (res.status === 404) {

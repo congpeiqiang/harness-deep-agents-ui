@@ -22,11 +22,15 @@ export interface CancelTaskResult {
  * @param taskId 子任务线程 ID（async_tasks 的 task_id/thread_id）
  * @param mainThreadId 主会话 thread_id（后端据此回写 async_tasks）
  */
+function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: "include" });
+}
+
 export async function cancelTask(
   taskId: string,
   mainThreadId: string
 ): Promise<CancelTaskResult> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/threads/${encodeURIComponent(taskId)}/cancel`,
     {
       method: "POST",

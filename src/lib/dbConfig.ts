@@ -80,6 +80,10 @@ const apiBase = (): string => {
   return base.replace(/\/+$/, "");
 };
 
+function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: "include" });
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -95,13 +99,13 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 export async function listDatabases(): Promise<DbInfo[]> {
-  const res = await fetch(`${apiBase()}/api/db-configs`, { cache: "no-store" });
+  const res = await authFetch(`${apiBase()}/api/db-configs`, { cache: "no-store" });
   const j = await handle<{ databases: DbInfo[] }>(res);
   return j.databases || [];
 }
 
 export async function upsertDatabase(payload: DbUpsertPayload): Promise<{ ok: boolean }> {
-  const res = await fetch(`${apiBase()}/api/db-configs`, {
+  const res = await authFetch(`${apiBase()}/api/db-configs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -110,21 +114,21 @@ export async function upsertDatabase(payload: DbUpsertPayload): Promise<{ ok: bo
 }
 
 export async function deleteDatabase(name: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`${apiBase()}/api/db-configs/${encodeURIComponent(name)}`, {
+  const res = await authFetch(`${apiBase()}/api/db-configs/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   return handle(res);
 }
 
 export async function listWrenProjects(): Promise<WrenProjectInfo[]> {
-  const res = await fetch(`${apiBase()}/api/wren-projects`, { cache: "no-store" });
+  const res = await authFetch(`${apiBase()}/api/wren-projects`, { cache: "no-store" });
   const j = await handle<{ projects: WrenProjectInfo[] }>(res);
   return j.projects || [];
 }
 
 // ── 语义库管理 API ───────────────────────────────────────
 export async function listSemanticProjects(): Promise<WrenSemanticProject[]> {
-  const res = await fetch(`${apiBase()}/api/wren-projects`, { cache: "no-store" });
+  const res = await authFetch(`${apiBase()}/api/wren-projects`, { cache: "no-store" });
   const j = await handle<{ projects: WrenSemanticProject[] }>(res);
   return j.projects || [];
 }
@@ -133,7 +137,7 @@ export async function associateLocalProject(
   path: string,
   targetDb: string
 ): Promise<{ ok: boolean; requires_restart?: boolean }> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/local`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/local`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, target_db: targetDb }),
@@ -144,7 +148,7 @@ export async function associateLocalProject(
 export async function importSemanticFromGit(
   payload: FromGitPayload
 ): Promise<FromGitResult> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/from-git`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/from-git`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -166,7 +170,7 @@ export async function importSemanticFromGit(
 export async function deleteSemanticProject(
   name: string
 ): Promise<{ ok: boolean; requires_restart?: boolean }> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   return handle(res);
@@ -175,7 +179,7 @@ export async function deleteSemanticProject(
 export async function buildSemanticProject(
   name: string
 ): Promise<{ ok: boolean; message: string }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/build`,
     { method: "POST" }
   );
@@ -190,7 +194,7 @@ export interface WrenValidateResult {
 }
 
 export async function validateSemanticProject(name: string): Promise<WrenValidateResult> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/validate`,
     { method: "POST" }
   );
@@ -215,7 +219,7 @@ export interface WrenSemanticSummary {
 }
 
 export async function getSemanticSummary(name: string): Promise<WrenSemanticSummary> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/summary`,
     { cache: "no-store" }
   );
@@ -298,7 +302,7 @@ export interface PushToGitResult {
 export async function createSemanticProject(
   payload: CreateProjectPayload
 ): Promise<CreateProjectResult> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/create`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -318,7 +322,7 @@ export async function introspectTables(
   projectName: string,
   dbName?: string
 ): Promise<IntrospectResult> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(projectName)}/introspect`,
     {
       method: "POST",
@@ -341,7 +345,7 @@ export async function generateModels(
   projectName: string,
   payload: GenerateModelsPayload
 ): Promise<GenerateModelsResult> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(projectName)}/generate-models`,
     {
       method: "POST",
@@ -363,7 +367,7 @@ export async function generateModels(
 export async function getKnowledgeTemplates(
   projectName: string
 ): Promise<{ templates: Record<string, string> }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(projectName)}/knowledge/template`,
     { cache: "no-store" }
   );
@@ -374,7 +378,7 @@ export async function saveKnowledge(
   projectName: string,
   files: Record<string, string>
 ): Promise<{ ok: boolean; saved: string[]; error?: string }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(projectName)}/knowledge/save`,
     {
       method: "POST",
@@ -388,7 +392,7 @@ export async function saveKnowledge(
 export async function openProjectDirectory(
   projectName: string
 ): Promise<{ ok: boolean; path: string; error?: string }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(projectName)}/open-directory`,
     { method: "POST" }
   );
@@ -399,7 +403,7 @@ export async function pushToGit(
   projectName: string,
   payload: PushToGitPayload
 ): Promise<PushToGitResult> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(projectName)}/push`,
     {
       method: "POST",
@@ -422,7 +426,7 @@ export async function testDatabase(
   name: string,
   payload?: DbUpsertPayload
 ): Promise<{ ok: boolean; message: string }> {
-  const res = await fetch(`${apiBase()}/api/db-configs/${encodeURIComponent(name)}/test`, {
+  const res = await authFetch(`${apiBase()}/api/db-configs/${encodeURIComponent(name)}/test`, {
     method: "POST",
     headers: payload ? { "Content-Type": "application/json" } : undefined,
     body: payload ? JSON.stringify(payload) : undefined,

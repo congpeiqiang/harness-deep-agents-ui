@@ -45,10 +45,14 @@ export interface DeleteWorkspaceResult {
  * 彻底删除工作区：移除注册表条目 + 删除服务器目录（语义库/报告/中间数据，不可恢复）。
  * @param name 工作区名称标识（name_key）。default 与当前活跃工作区会被后端拒绝。
  */
+function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: "include" });
+}
+
 export async function deleteWorkspace(
   name: string
 ): Promise<DeleteWorkspaceResult> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/workspaces/${encodeURIComponent(name)}?delete_files=1`,
     { method: "DELETE" }
   );

@@ -51,10 +51,14 @@ export interface ThreadRunStatus {
  * 读不到就当作「没有中断信号」，绝不据此渲染横幅（后端同样 fail-closed，
  * 避免网络抖动弹出一条假「已中断」）。
  */
+function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: "include" });
+}
+
 export async function fetchThreadRunStatus(
   threadId: string
 ): Promise<ThreadRunStatus> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/threads/${encodeURIComponent(threadId)}/run-status`,
     { method: "GET", headers: { Accept: "application/json" } }
   );

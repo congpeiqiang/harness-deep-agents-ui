@@ -78,7 +78,7 @@ async function probeExists(name: string): Promise<boolean> {
   try {
     const res = await fetch(
       `${apiBase()}/api/reports/${encodeURIComponent(name)}`,
-      { method: "HEAD", cache: "no-store" }
+      { method: "HEAD", cache: "no-store", credentials: "include" }
     );
     const exists = res.status !== 404;
     existsCache.set(name, { exists, at: Date.now() });
@@ -130,7 +130,8 @@ export const ReportFileActions = React.memo<{ content: string }>(
       setLoadingName(name);
       try {
         const res = await fetch(
-          `${apiBase()}/api/reports/${encodeURIComponent(name)}`
+          `${apiBase()}/api/reports/${encodeURIComponent(name)}`,
+          { credentials: "include" }
         );
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);

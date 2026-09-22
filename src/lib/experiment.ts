@@ -9,8 +9,12 @@ const apiBase = (): string => {
   return base.replace(/\/+$/, "");
 };
 
+function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: "include" });
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${apiBase()}${path}`, {
+  const res = await authFetch(`${apiBase()}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...init,
   });

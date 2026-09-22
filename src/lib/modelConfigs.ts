@@ -66,6 +66,10 @@ const apiBase = (): string => {
   return base.replace(/\/+$/, "");
 };
 
+function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: "include" });
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -81,20 +85,20 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 export async function listModelConfigs(): Promise<ModelListResult> {
-  const res = await fetch(`${apiBase()}/api/model-configs`, { cache: "no-store" });
+  const res = await authFetch(`${apiBase()}/api/model-configs`, { cache: "no-store" });
   const j = await handle<ModelListResult>(res);
   return { providers: j.providers || [], active: j.active || "" };
 }
 
 export async function getModelConfig(name: string): Promise<ModelProviderInfo> {
-  const res = await fetch(`${apiBase()}/api/model-configs/${encodeURIComponent(name)}`, {
+  const res = await authFetch(`${apiBase()}/api/model-configs/${encodeURIComponent(name)}`, {
     cache: "no-store",
   });
   return handle<ModelProviderInfo>(res);
 }
 
 export async function upsertModelConfig(payload: ModelUpsertPayload): Promise<{ ok: boolean }> {
-  const res = await fetch(`${apiBase()}/api/model-configs`, {
+  const res = await authFetch(`${apiBase()}/api/model-configs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -103,14 +107,14 @@ export async function upsertModelConfig(payload: ModelUpsertPayload): Promise<{ 
 }
 
 export async function deleteModelConfig(name: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`${apiBase()}/api/model-configs/${encodeURIComponent(name)}`, {
+  const res = await authFetch(`${apiBase()}/api/model-configs/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   return handle(res);
 }
 
 export async function activateModelConfig(name: string): Promise<{ ok: boolean }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/model-configs/${encodeURIComponent(name)}/activate`,
     { method: "POST" }
   );
@@ -126,7 +130,7 @@ export async function activateModelConfig(name: string): Promise<{ ok: boolean }
 export async function testModelConfig(
   payload: { name?: string; base_url?: string; api_key?: string; api_protocol?: string }
 ): Promise<ModelTestResult> {
-  const res = await fetch(`${apiBase()}/api/model-configs/test`, {
+  const res = await authFetch(`${apiBase()}/api/model-configs/test`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -151,7 +155,7 @@ export async function probeModelCapabilities(
     models: string[]; // 要探测容量的模型 ID 列表
   }
 ): Promise<ModelCapabilityProbeResponse> {
-  const res = await fetch(`${apiBase()}/api/model-configs/probe-capabilities`, {
+  const res = await authFetch(`${apiBase()}/api/model-configs/probe-capabilities`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

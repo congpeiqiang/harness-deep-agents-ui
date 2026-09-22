@@ -101,7 +101,7 @@ export function ContextRing({ selectedModel, selectedProvider }: ContextRingProp
       }
       const res = await fetch(
         `${baseUrl.replace(/\/$/, "")}/api/threads/${threadId}/compact`,
-        { method: "POST" }
+        { method: "POST", credentials: "include" }
       );
       const data = await res.json();
       if (data.ok && !data.skipped) {

@@ -30,6 +30,10 @@ const apiBase = (): string => {
   return base.replace(/\/+$/, "");
 };
 
+function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: "include" });
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -46,7 +50,7 @@ async function handle<T>(res: Response): Promise<T> {
 
 /** 获取工作区列表 */
 export async function listWorkspaces(): Promise<WorkspaceListResult> {
-  const res = await fetch(`${apiBase()}/api/workspaces`, { cache: "no-store" });
+  const res = await authFetch(`${apiBase()}/api/workspaces`, { cache: "no-store" });
   return handle<WorkspaceListResult>(res);
 }
 
@@ -56,7 +60,7 @@ export async function registerWorkspace(
   path: string,
   displayName?: string
 ): Promise<{ ok: boolean; workspace: WorkspaceInfo; requires_restart: boolean }> {
-  const res = await fetch(`${apiBase()}/api/workspaces`, {
+  const res = await authFetch(`${apiBase()}/api/workspaces`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, path, display_name: displayName }),
@@ -68,7 +72,7 @@ export async function registerWorkspace(
 export async function activateWorkspace(
   name: string
 ): Promise<{ ok: boolean; active: string; requires_restart: boolean }> {
-  const res = await fetch(`${apiBase()}/api/workspaces/${encodeURIComponent(name)}/activate`, {
+  const res = await authFetch(`${apiBase()}/api/workspaces/${encodeURIComponent(name)}/activate`, {
     method: "PUT",
   });
   return handle(res);
@@ -78,7 +82,7 @@ export async function activateWorkspace(
 export async function unregisterWorkspace(
   name: string
 ): Promise<{ ok: boolean; name: string; requires_restart: boolean }> {
-  const res = await fetch(`${apiBase()}/api/workspaces/${encodeURIComponent(name)}`, {
+  const res = await authFetch(`${apiBase()}/api/workspaces/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   return handle(res);
@@ -86,6 +90,6 @@ export async function unregisterWorkspace(
 
 /** 获取当前活跃工作区信息 */
 export async function getActiveWorkspace(): Promise<WorkspaceActiveInfo> {
-  const res = await fetch(`${apiBase()}/api/workspaces/active`, { cache: "no-store" });
+  const res = await authFetch(`${apiBase()}/api/workspaces/active`, { cache: "no-store" });
   return handle<WorkspaceActiveInfo>(res);
 }

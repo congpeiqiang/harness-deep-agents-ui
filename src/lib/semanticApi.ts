@@ -206,6 +206,10 @@ const apiBase = (): string => {
   return base.replace(/\/+$/, "");
 };
 
+function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: "include" });
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -223,7 +227,7 @@ async function handle<T>(res: Response): Promise<T> {
 // ── 数据库列表 ───────────────────────────────────────────────
 
 export async function listDatabases(): Promise<DbInfo[]> {
-  const res = await fetch(`${apiBase()}/api/db-configs`, { cache: "no-store" });
+  const res = await authFetch(`${apiBase()}/api/db-configs`, { cache: "no-store" });
   const j = await handle<{ databases: DbInfo[] }>(res);
   return j.databases || [];
 }
@@ -231,7 +235,7 @@ export async function listDatabases(): Promise<DbInfo[]> {
 // ── 语义库列表 ───────────────────────────────────────────────
 
 export async function listSemanticProjects(): Promise<SemanticProject[]> {
-  const res = await fetch(`${apiBase()}/api/wren-projects`, { cache: "no-store" });
+  const res = await authFetch(`${apiBase()}/api/wren-projects`, { cache: "no-store" });
   const j = await handle<{ projects: SemanticProject[] }>(res);
   return j.projects || [];
 }
@@ -241,7 +245,7 @@ export async function listSemanticProjects(): Promise<SemanticProject[]> {
 export async function createSemanticProject(
   payload: CreateProjectPayload
 ): Promise<{ ok: boolean; project?: SemanticProject; path?: string; error?: string }> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/create`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -260,7 +264,7 @@ export async function introspectTables(
   db_type?: string;
   error?: string;
 }> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/introspect`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/introspect`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ db_name: dbName || "" }),
@@ -272,7 +276,7 @@ export async function generateModels(
   name: string,
   payload: GenerateModelsPayload
 ): Promise<{ ok: boolean; generated: { models: number; relationships: number }; error?: string }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/generate-models`,
     {
       method: "POST",
@@ -288,7 +292,7 @@ export async function generateModels(
 export async function readKnowledge(
   name: string
 ): Promise<{ ok: boolean; knowledge: KnowledgeData }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/knowledge/read`,
     { cache: "no-store" }
   );
@@ -305,7 +309,7 @@ export async function saveKnowledge(
   /** 被拒绝的路径（非法路径 / 空 nl+sql），前端需提示，不能当成功 */
   rejected: string[];
 }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/knowledge/save`,
     {
       method: "POST",
@@ -343,7 +347,7 @@ export async function aiGenerateKnowledge(
   mode: "ai" | "fallback";
   error?: string;
 }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/knowledge/ai-generate`,
     {
       method: "POST",
@@ -357,7 +361,7 @@ export async function aiGenerateKnowledge(
 export async function getKnowledgeTemplates(
   name: string
 ): Promise<{ templates: Record<string, string> }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/knowledge/template`,
     { cache: "no-store" }
   );
@@ -370,7 +374,7 @@ export async function pushToGit(
   name: string,
   payload: PushToGitPayload
 ): Promise<{ ok: boolean; message?: string; error?: string }> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/push`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/push`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -379,7 +383,7 @@ export async function pushToGit(
 }
 
 export async function getGitStatus(name: string): Promise<GitStatusInfo> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/git-status`,
     { cache: "no-store" }
   );
@@ -388,7 +392,7 @@ export async function getGitStatus(name: string): Promise<GitStatusInfo> {
 
 /** 远程分支/tag 列表（「更新」对话框的候选） */
 export async function getGitRefs(name: string): Promise<GitRefsInfo> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/git-refs`,
     { cache: "no-store" }
   );
@@ -410,7 +414,7 @@ export async function gitPull(
   if (ref) payload.ref = ref;
   if (discardLocal) payload.discard_local = true;
   const body = Object.keys(payload).length ? JSON.stringify(payload) : undefined;
-  const res = await fetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/git-pull`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/git-pull`, {
     method: "POST",
     ...(body
       ? { headers: { "Content-Type": "application/json" }, body }
@@ -450,7 +454,7 @@ export async function adoptSemanticFromGit(
     target_db?: string;
   }
 ): Promise<GitAdoptResult> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/git-adopt`,
     {
       method: "POST",
@@ -468,7 +472,7 @@ export async function getGitSshKey(): Promise<{
   path?: string;
   error?: string;
 }> {
-  const res = await fetch(`${apiBase()}/api/git-ssh-key`, { cache: "no-store" });
+  const res = await authFetch(`${apiBase()}/api/git-ssh-key`, { cache: "no-store" });
   return handle(res);
 }
 
@@ -477,7 +481,7 @@ export async function getGitSshKey(): Promise<{
 export async function deleteSemanticProject(
   name: string
 ): Promise<{ ok: boolean }> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   return handle(res);
@@ -486,7 +490,7 @@ export async function deleteSemanticProject(
 export async function buildSemanticProject(
   name: string
 ): Promise<{ ok: boolean; message: string }> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/build`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/build`, {
     method: "POST",
   });
   return handle(res);
@@ -495,7 +499,7 @@ export async function buildSemanticProject(
 export async function validateSemanticProject(
   name: string
 ): Promise<{ ok: boolean; message: string; summary: Record<string, unknown> }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/validate`,
     { method: "POST" }
   );
@@ -506,7 +510,7 @@ export async function associateLocalProject(
   path: string,
   targetDb: string
 ): Promise<{ ok: boolean; project?: SemanticProject }> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/local`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/local`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, target_db: targetDb }),
@@ -535,7 +539,7 @@ export async function importSemanticFromGit(payload: {
   build_note?: string;
   error?: string;
 }> {
-  const res = await fetch(`${apiBase()}/api/wren-projects/from-git`, {
+  const res = await authFetch(`${apiBase()}/api/wren-projects/from-git`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -546,7 +550,7 @@ export async function importSemanticFromGit(payload: {
 export async function openProjectDirectory(
   name: string
 ): Promise<{ ok: boolean; path?: string; error?: string }> {
-  const res = await fetch(
+  const res = await authFetch(
     `${apiBase()}/api/wren-projects/${encodeURIComponent(name)}/open-directory`,
     { method: "POST" }
   );
