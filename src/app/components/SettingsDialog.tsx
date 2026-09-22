@@ -30,7 +30,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { ModelConfigPanel } from "./ModelConfigPanel";
-import { DbConfigPanel } from "./DbConfigPanel";
+import { DbConfigPanel } from "./DbConfigDialog";
 import { EvalFlagsPanel } from "./EvalFlagsPanel";
 import { SemanticLibraryPanel } from "./SemanticLibraryPanel";
 import { WorkspacePanel } from "./WorkspacePanel";
