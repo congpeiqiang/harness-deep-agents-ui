@@ -69,7 +69,6 @@ const BASE_TABS: TabDef[] = [
   { id: "keywords", label: "关键词", icon: Search },
   { id: "thinking", label: "深度思考", icon: BrainCircuit },
   { id: "sql", label: "SQL审批", icon: ShieldCheck },
-  { id: "eval", label: "评估", icon: Gauge },
   { id: "semantic", label: "语义库", icon: BookOpen },
   { id: "workspace", label: "工作区", icon: Layers },
   { id: "deploy", label: "部署 URL和助手 ID", icon: Server },
@@ -80,6 +79,7 @@ function getTabs(isAdmin: boolean): TabDef[] {
   const idx = BASE_TABS.findIndex((t) => t.id === "deploy");
   return [
     ...BASE_TABS.slice(0, idx),
+    { id: "eval", label: "评估", icon: Gauge },
     { id: "users", label: "用户管理", icon: Users },
     ...BASE_TABS.slice(idx),
   ];
