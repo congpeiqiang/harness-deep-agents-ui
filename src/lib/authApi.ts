@@ -126,3 +126,52 @@ export async function deleteUser(userId: string): Promise<void> {
     throw new Error(data.error || `删除用户失败 (${res.status})`);
   }
 }
+
+// ── 数据库授权 API（仅 admin 可用）───────────────────────
+
+export interface UserGrant {
+  db_name: string;
+  level: string;
+}
+
+/** 列出某用户的库授权。 */
+export async function listUserGrants(uid: string): Promise<UserGrant[]> {
+  const res = await fetch(`${baseUrl()}/api/auth/users/${encodeURIComponent(uid)}/grants`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || data.detail || `获取授权失败 (${res.status})`);
+  }
+  const data = await res.json();
+  return data.grants || [];
+}
+
+/** 授权用户访问某库。 */
+export async function grantUserDb(uid: string, dbName: string): Promise<void> {
+  const res = await fetch(`${baseUrl()}/api/auth/users/${encodeURIComponent(uid)}/grants`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ db_name: dbName }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || data.detail || `授权失败 (${res.status})`);
+  }
+}
+
+/** 撤销用户对某库的授权。 */
+export async function revokeUserDb(uid: string, dbName: string): Promise<void> {
+  const res = await fetch(
+    `${baseUrl()}/api/auth/users/${encodeURIComponent(uid)}/grants/${encodeURIComponent(dbName)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    }
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || data.detail || `撤销失败 (${res.status})`);
+  }
+}

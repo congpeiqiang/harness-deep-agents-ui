@@ -19,8 +19,12 @@ import {
   addUser,
   updateUser,
   deleteUser,
+  listUserGrants,
+  grantUserDb,
+  revokeUserDb,
   type UserRecord,
 } from "@/lib/authApi";
+import { listDatabases, type DbInfo } from "@/lib/dbConfig";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 
 interface UserManagementPanelProps {
@@ -48,6 +52,10 @@ export function UserManagementPanel({ active }: UserManagementPanelProps) {
   const [formDisplayName, setFormDisplayName] = useState("");
   const [formIsAdmin, setFormIsAdmin] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // 数据库授权
+  const [allDbs, setAllDbs] = useState<string[]>([]);
+  const [userGrants, setUserGrants] = useState<Set<string>>(new Set());
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -107,12 +115,46 @@ export function UserManagementPanel({ active }: UserManagementPanelProps) {
   };
 
   // ── 编辑用户 ──
-  const openEdit = (user: UserRecord) => {
+  const openEdit = async (user: UserRecord) => {
     setTargetUser(user);
     setFormPassword("");
     setFormDisplayName(user.display_name);
     setFormIsAdmin(user.is_admin);
     setEditOpen(true);
+    // 加载可用库和用户当前授权
+    try {
+      const [dbs, grants] = await Promise.all([
+        listDatabases(),
+        listUserGrants(user.user_id),
+      ]);
+      setAllDbs(dbs.map((d: DbInfo) => d.name));
+      setUserGrants(new Set(grants.map((g) => g.db_name)));
+    } catch {
+      setAllDbs([]);
+      setUserGrants(new Set());
+    }
+  };
+
+  const toggleDbGrant = async (dbName: string, checked: boolean) => {
+    if (!targetUser) return;
+    try {
+      if (checked) {
+        await grantUserDb(targetUser.user_id, dbName);
+        setUserGrants((prev) => new Set([...prev, dbName]));
+        toast.success(`已授权 ${dbName}`);
+      } else {
+        await revokeUserDb(targetUser.user_id, dbName);
+        setUserGrants((prev) => {
+          const next = new Set(prev);
+          next.delete(dbName);
+          return next;
+        });
+        toast.success(`已撤销 ${dbName}`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "未知错误";
+      toast.error(msg);
+    }
   };
 
   const handleEdit = async () => {
@@ -343,6 +385,34 @@ export function UserManagementPanel({ active }: UserManagementPanelProps) {
               <Label htmlFor="edit-is-admin">管理员权限</Label>
               <Switch checked={formIsAdmin} onCheckedChange={setFormIsAdmin} />
             </div>
+            {/* 数据库授权 */}
+            {allDbs.length > 0 && (
+              <div className="grid gap-1.5">
+                <Label>数据库授权</Label>
+                <p className="text-xs text-muted-foreground">
+                  {formIsAdmin ? "管理员默认可访问所有库" : "勾选允许该用户访问的数据库"}
+                </p>
+                <div className="max-h-32 overflow-y-auto rounded border border-border p-2 space-y-1.5">
+                  {allDbs.map((db) => (
+                    <label
+                      key={db}
+                      className="flex items-center gap-2 text-sm cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={userGrants.has(db)}
+                        onChange={(e) => toggleDbGrant(db, e.target.checked)}
+                        disabled={formIsAdmin}
+                        className="h-4 w-4 rounded border-border"
+                      />
+                      <span className={formIsAdmin ? "text-muted-foreground" : ""}>
+                        {db}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>
