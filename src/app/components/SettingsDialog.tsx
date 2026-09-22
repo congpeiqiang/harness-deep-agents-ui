@@ -1,6 +1,24 @@
 "use client";
 
-import { useEffect, useState, type ComponentType } from "react";
+import {
+  BookOpen,
+  BrainCircuit,
+  Cpu,
+  Database,
+  Gauge,
+  Layers,
+  Search,
+  Server,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
+import type { ComponentType, CustomEvent } from "react";
+import { useEffect, useState } from "react";
+
+import { cn } from "@/lib/utils";
+import { DEFAULT_QUERY_KEYWORDS, getConfig, saveConfig } from "@/lib/config";
+import type { StandaloneConfig } from "@/lib/config";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -8,41 +26,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { cn } from "@/lib/utils";
-import {
-  getConfig,
-  saveConfig,
-  getQueryKeywords,
-  DEFAULT_QUERY_KEYWORDS,
-  type StandaloneConfig,
-} from "@/lib/config";
-import { ModelConfigPanel } from "@/app/components/ModelConfigDialog";
-import { DbConfigPanel } from "@/app/components/DbConfigDialog";
-import { SemanticLibraryPanel } from "@/app/components/SemanticLibraryPanel";
-import { WorkspacePanel } from "@/app/components/WorkspacePanel";
-import { EvalFlagsPanel } from "@/app/components/EvalFlagsPanel";
-import {
-  Cpu,
-  Database,
-  Search,
-  BrainCircuit,
-  ShieldCheck,
-  Server,
-  BookOpen,
-  Layers,
-  Gauge,
-} from "lucide-react";
+import { ModelConfigPanel } from "./ModelConfigPanel";
+import { DbConfigPanel } from "./DbConfigPanel";
+import { EvalFlagsPanel } from "./EvalFlagsPanel";
+import { SemanticLibraryPanel } from "./SemanticLibraryPanel";
+import { WorkspacePanel } from "./WorkspacePanel";
+import { UserManagementPanel } from "./UserManagementPanel";
+import type { AuthUser } from "@/lib/authApi";
 
 interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // 当前配置（部署 URL / 助手 ID 用）；修改部署信息时回调给 page.tsx 重新初始化 Client
   config?: StandaloneConfig | null;
   onSaveConfig?: (config: StandaloneConfig) => void;
+  currentUser?: AuthUser | null;
 }
 
 type TabId =
@@ -54,6 +54,7 @@ type TabId =
   | "eval"
   | "semantic"
   | "workspace"
+  | "users"
   | "deploy";
 
 interface TabDef {
@@ -62,7 +63,7 @@ interface TabDef {
   icon: ComponentType<{ className?: string }>;
 }
 
-const TABS: TabDef[] = [
+const BASE_TABS: TabDef[] = [
   { id: "model", label: "模型", icon: Cpu },
   { id: "db", label: "数据库", icon: Database },
   { id: "keywords", label: "关键词", icon: Search },
@@ -74,19 +75,27 @@ const TABS: TabDef[] = [
   { id: "deploy", label: "部署 URL和助手 ID", icon: Server },
 ];
 
-/**
- * 统一设置弹窗：左侧竖向选项卡 + 右侧对应内容。
- * 整合了原「模型配置管理 / 数据库 / 查询关键词 / 开启思考过程 / SQL 审批 / 部署配置」六个独立弹窗。
- */
+function getTabs(isAdmin: boolean): TabDef[] {
+  if (!isAdmin) return BASE_TABS;
+  const idx = BASE_TABS.findIndex((t) => t.id === "deploy");
+  return [
+    ...BASE_TABS.slice(0, idx),
+    { id: "users", label: "用户管理", icon: Users },
+    ...BASE_TABS.slice(idx),
+  ];
+}
+
 export function SettingsDialog({
   open,
   onOpenChange,
   config,
   onSaveConfig,
+  currentUser,
 }: SettingsDialogProps) {
+  const isAdmin = currentUser?.is_admin ?? false;
+  const tabs = getTabs(isAdmin);
   const [activeTab, setActiveTab] = useState<TabId>("model");
 
-  // 监听外部 tab 切换事件（如从数据库卡片触发「创建语义库」跳转到 semantic tab）
   useEffect(() => {
     const onSwitch = (e: Event) => {
       const tab = (e as CustomEvent).detail?.tab;
@@ -96,12 +105,10 @@ export function SettingsDialog({
     return () => window.removeEventListener("switch-settings-tab", onSwitch);
   }, []);
 
-  // 查询关键词 / 思考过程 / SQL 审批（写 localStorage）
   const [keywordsText, setKeywordsText] = useState("");
   const [enableThinking, setEnableThinking] = useState(true);
   const [sqlApprovalAsk, setSqlApprovalAsk] = useState(true);
 
-  // 部署 URL / 助手 ID（写 localStorage 并回调 page.tsx 重新初始化）
   const [deploymentUrl, setDeploymentUrl] = useState("");
   const [assistantId, setAssistantId] = useState("");
 
@@ -143,7 +150,6 @@ export function SettingsDialog({
       alert("请填写所有必填字段");
       return;
     }
-    // 以 localStorage 为准（含查询关键词/思考/审批等实时字段），避免用陈旧的 config prop 覆盖掉刚改过的其它选项
     const base = getConfig() ?? config ?? { deploymentUrl: "", assistantId: "" };
     onSaveConfig?.({ ...base, deploymentUrl, assistantId });
   };
@@ -159,9 +165,8 @@ export function SettingsDialog({
         </DialogHeader>
 
         <div className="flex h-[min(600px,80vh)]">
-          {/* 左侧选项卡 */}
           <nav className="flex w-48 shrink-0 flex-col gap-1 border-r border-border bg-muted/30 p-2">
-            {TABS.map((t) => {
+            {tabs.map((t) => {
               const Icon = t.icon;
               const active = t.id === activeTab;
               return (
@@ -183,7 +188,6 @@ export function SettingsDialog({
             })}
           </nav>
 
-          {/* 右侧内容 */}
           <div className="min-w-0 flex-1 overflow-y-auto p-5">
             <div className={cn("flex flex-col gap-3", activeTab !== "model" && "hidden")}>
               <h3 className="text-base font-semibold">模型</h3>
@@ -277,6 +281,11 @@ export function SettingsDialog({
                   window.dispatchEvent(new CustomEvent("workspace-changed"))
                 }
               />
+            </div>
+
+            <div className={cn("flex flex-col gap-3", activeTab !== "users" && "hidden")}>
+              <h3 className="text-base font-semibold">用户管理</h3>
+              <UserManagementPanel active={activeTab === "users"} />
             </div>
 
             {activeTab === "deploy" && (
