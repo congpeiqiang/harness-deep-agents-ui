@@ -17,6 +17,9 @@ import { SidebarRail } from "@/app/components/SidebarRail";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ChatInterface } from "@/app/components/ChatInterface";
 import { toast } from "sonner";
+import { AuthGuard } from "@/app/components/AuthGuard";
+import { logout, type AuthUser } from "@/lib/authApi";
+import { LogOut } from "lucide-react";
 
 interface HomePageInnerProps {
   config: StandaloneConfig;
@@ -31,7 +34,8 @@ function HomePageInner({
   configDialogOpen,
   setConfigDialogOpen,
   handleSaveConfig,
-}: HomePageInnerProps) {
+  currentUser,
+}: HomePageInnerProps & { currentUser?: AuthUser }) {
   const client = useClient();
   const [threadId, setThreadId] = useQueryState("threadId");
   // 侧边栏折叠态：false=展开（会话列表），true=折叠成窄栏（对标 deepseek harness rail）
@@ -147,6 +151,7 @@ function HomePageInner({
         onOpenChange={setConfigDialogOpen}
         config={config}
         onSaveConfig={handleSaveConfig}
+        currentUser={currentUser}
       />
       <div className="flex h-screen flex-col">
         <header className="flex h-16 items-center justify-between border-b border-border px-6">
@@ -158,18 +163,22 @@ function HomePageInner({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <Link href="/experiment">
-              <Button variant="outline" size="sm">
-                <FlaskConical className="mr-2 h-4 w-4" />
-                离线测试
-              </Button>
-            </Link>
-            <Link href="/feedback/annotate">
-              <Button variant="outline" size="sm">
-                <MessageSquareWarning className="mr-2 h-4 w-4" />
-                待标注
-              </Button>
-            </Link>
+            {currentUser?.is_admin && (
+              <>
+                <Link href="/experiment">
+                  <Button variant="outline" size="sm">
+                    <FlaskConical className="mr-2 h-4 w-4" />
+                    离线测试
+                  </Button>
+                </Link>
+                <Link href="/feedback/annotate">
+                  <Button variant="outline" size="sm">
+                    <MessageSquareWarning className="mr-2 h-4 w-4" />
+                    待标注
+                  </Button>
+                </Link>
+              </>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -191,6 +200,22 @@ function HomePageInner({
               <Settings className="mr-2 h-4 w-4" />
               设置
             </Button>
+            {currentUser && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>{currentUser.display_name}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={async () => {
+                    await logout();
+                    window.location.href = "/login";
+                  }}
+                  title="登出"
+                >
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </div>
         </header>
 
@@ -255,6 +280,7 @@ function HomePageContent() {
   const [config, setConfig] = useState<StandaloneConfig | null>(null);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [assistantId, setAssistantId] = useQueryState("assistantId");
+  const [currentUser, setCurrentUser] = useState<AuthUser | undefined>();
 
   // On mount, check for saved config, otherwise show config dialog
   useEffect(() => {
@@ -312,17 +338,20 @@ function HomePageContent() {
   }
 
   return (
-    <ClientProvider
-      deploymentUrl={config.deploymentUrl}
-      apiKey={langsmithApiKey}
-    >
-      <HomePageInner
-        config={config}
-        configDialogOpen={configDialogOpen}
-        setConfigDialogOpen={setConfigDialogOpen}
-        handleSaveConfig={handleSaveConfig}
-      />
-    </ClientProvider>
+    <AuthGuard onUser={setCurrentUser}>
+      <ClientProvider
+        deploymentUrl={config.deploymentUrl}
+        apiKey={langsmithApiKey}
+      >
+        <HomePageInner
+          config={config}
+          configDialogOpen={configDialogOpen}
+          setConfigDialogOpen={setConfigDialogOpen}
+          handleSaveConfig={handleSaveConfig}
+          currentUser={currentUser}
+        />
+      </ClientProvider>
+    </AuthGuard>
   );
 }
 // TODO  My80OmFIVnBZMlhrdUp2bG43bmx2TG82UVc1dGFBPT06NmY1MTllNTE=
