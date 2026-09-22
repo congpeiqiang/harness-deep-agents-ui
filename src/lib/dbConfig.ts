@@ -89,7 +89,7 @@ async function handle<T>(res: Response): Promise<T> {
     let msg = `HTTP ${res.status}`;
     try {
       const j = await res.json();
-      msg = j.error || msg;
+      msg = j.error || j.detail || msg;
     } catch {
       /* ignore */
     }
