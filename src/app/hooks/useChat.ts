@@ -203,6 +203,9 @@ export function useChat({
       new Client({
         apiUrl: (client as any)?.threads?.apiUrl,
         defaultHeaders: { ...((client as any)?.threads?.defaultHeaders || {}) },
+        callerOptions: {
+          fetch: (url, init) => fetch(url, { ...init, credentials: "include" }),
+        },
       }),
     [client]
   );

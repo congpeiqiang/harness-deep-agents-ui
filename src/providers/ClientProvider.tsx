@@ -29,6 +29,9 @@ export function ClientProvider({
         "Content-Type": "application/json",
         "X-Api-Key": apiKey,
       },
+      callerOptions: {
+        fetch: (url, init) => fetch(url, { ...init, credentials: "include" }),
+      },
     });
   }, [deploymentUrl, apiKey]);
 
