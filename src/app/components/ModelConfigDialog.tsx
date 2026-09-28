@@ -30,7 +30,6 @@ import {
   type ModelProviderInfo,
 } from "@/lib/modelConfigs";
 import { cn } from "@/lib/utils";
-import { WorkspaceBadge } from "./WorkspaceBadge";
 
 interface ModelConfigPanelProps {
   // 是否可见/激活：true 时刷新列表并重置表单（嵌入设置页时为 true，独立弹窗时为 open）
@@ -532,7 +531,6 @@ export function ModelConfigPanel({ active = true, onChanged }: ModelConfigPanelP
           配置 LLM 接入点（OpenAI-compatible）。api_key 加密存储，保存后即时生效。
         </p>
         <div className="flex items-center gap-2">
-          <WorkspaceBadge />
           <Button
             size="sm"
             onClick={() => {
@@ -577,7 +575,7 @@ export function ModelConfigPanel({ active = true, onChanged }: ModelConfigPanelP
             </div>
           ) : providers.length === 0 ? (
             <div className="rounded-md border border-border p-3 text-xs text-muted-foreground">
-              暂无模型配置，点击右上角「+ 新增」添加（.env 的默认模型会在后端首次启动时自动迁入）。
+              本账号暂无模型配置，点击右上角「+ 新增」添加。模型配置按账号独立，只对本账号生效，不会继承其他账号的配置。
             </div>
           ) : (
             providers.map((p) => {

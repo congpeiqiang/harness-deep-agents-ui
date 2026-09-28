@@ -1694,7 +1694,7 @@ export default function AnnotatePage() {
       </div>
 
       {/* 批量清空：比单条重一档的确认（要求把条数敲进去才解锁）。仓里没有 AlertDialog，
-          沿用 WorkspacePanel 的 shadcn Dialog + variant=destructive 先例。 */}
+          沿用已有的 shadcn Dialog + variant=destructive 先例。 */}
       <Dialog
         open={clearOpen}
         onOpenChange={(o) => {

@@ -33,7 +33,6 @@ import {
   listSemanticProjects,
   type SemanticProject,
 } from "@/lib/semanticApi";
-import { WorkspaceBadge } from "./WorkspaceBadge";
 import { KnowledgeEditor } from "./KnowledgeEditor";
 
 interface DbConfigPanelProps {
@@ -118,16 +117,9 @@ export function DbConfigPanel({ active = true, onChanged }: DbConfigPanelProps) 
     refreshSemanticProjects();
   }, [refresh, refreshWrenProjects, refreshSemanticProjects]);
 
-  // 工作区切换时重新拉取数据库列表和 Wren 项目列表
-  useEffect(() => {
-    const onWsChanged = () => {
-      refresh();
-      refreshWrenProjects();
-      refreshSemanticProjects();
-    };
-    window.addEventListener("workspace-changed", onWsChanged);
-    return () => window.removeEventListener("workspace-changed", onWsChanged);
-  }, [refresh, refreshWrenProjects, refreshSemanticProjects]);
+  // 原「工作区切换时重新拉取列表」的监听已删除（2026-09-25）：工作区不再可切换，
+  // 不会有 workspace-changed 事件。库/语义库的刷新由下面的
+  // semantic-projects-changed 与各自的编辑动作负责。
 
   // 语义库变更时刷新关联状态（创建/构建/删除/推送后）
   useEffect(() => {
@@ -226,7 +218,6 @@ export function DbConfigPanel({ active = true, onChanged }: DbConfigPanelProps) 
           配置要接入的数据库（MySQL / ClickHouse / PostgreSQL）。连接信息只保存在后端，密码加密存储。
         </p>
         <div className="flex items-center gap-2">
-          <WorkspaceBadge />
           <Button size="sm" onClick={() => { resetForm(); setFormExpanded(true); setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth" }), 50); }}>+ 新增</Button>
         </div>
       </div>

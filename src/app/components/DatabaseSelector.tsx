@@ -45,26 +45,9 @@ export function DatabaseSelector({ value, onChange }: Props) {
     return () => window.removeEventListener("databases-changed", onDbsChanged);
   }, [refresh]);
 
-  // 切换工作区后刷新数据库列表，并自动选中第一个可用库
-  useEffect(() => {
-    const onWsChanged = async () => {
-      try {
-        const list = await listDatabases();
-        setDbs(list);
-        setError(false);
-        // 自动选中新工作区的第一个库，避免旧工作区的库名残留
-        if (list.length > 0) {
-          onChange(list[0].name);
-        }
-      } catch (e) {
-        console.error("[DB_SELECT] 工作区切换后拉取数据库列表失败:", e);
-        setDbs([]);
-        setError(true);
-      }
-    };
-    window.addEventListener("workspace-changed", onWsChanged);
-    return () => window.removeEventListener("workspace-changed", onWsChanged);
-  }, [onChange]);
+  // 原「切换工作区后刷新数据库列表并自动选中第一个库」的监听已删除（2026-09-25）：
+  // 工作区是单一且路径钉死的，没有切换动作，也不再有 workspace-changed 事件。
+  // 库列表刷新由上面的 databases-changed 与首次挂载的 refresh() 负责。
 
   const list = dbs ?? [];
   const current = list.find((d) => d.name === value);

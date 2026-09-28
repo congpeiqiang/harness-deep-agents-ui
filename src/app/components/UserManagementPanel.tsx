@@ -345,6 +345,10 @@ export function UserManagementPanel({ active }: UserManagementPanelProps) {
               <Label htmlFor="add-is-admin">管理员权限</Label>
               <Switch checked={formIsAdmin} onCheckedChange={setFormIsAdmin} />
             </div>
+            <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+              模型配置按账号独立：新账号（含管理员）<span className="font-medium">不继承</span>现有账号的大模型，
+              需由该账号登录后在「设置 → 模型」自行新增接入点，否则无法发送消息。
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)} disabled={saving}>

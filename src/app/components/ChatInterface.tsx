@@ -40,7 +40,6 @@ import { useQueryState } from "nuqs";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { toast } from "sonner";
 import { getQueryKeywords, getEnableThinking } from "@/lib/config";
-import { getActiveWorkspace } from "@/lib/workspace";
 import { listThreadFeedback, type FeedbackRecord } from "@/lib/feedback";
 import { forkThread } from "@/lib/threadFork";
 import { decideSqlApproval, type SqlApprovalDecision } from "@/lib/sqlApproval";
@@ -57,7 +56,6 @@ import { FilesPopover } from "@/app/components/TasksFilesSidebar";
 import { useFileUpload } from "@/app/hooks/useFileUpload";
 import { ContentBlocksPreview } from "@/app/components/ContentBlocksPreview";
 import { DatabaseSelector } from "@/app/components/DatabaseSelector";
-import { WorkspaceSelector } from "@/app/components/WorkspaceSelector";
 import { ModelSelector } from "@/app/components/ModelSelector";
 import { listModelConfigs } from "@/lib/modelConfigs";
 import { Label } from "@/components/ui/label";
@@ -125,42 +123,8 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
       return "";
     }
   });
-  // 选工作区：持久化到 localStorage
-  const [selectedWorkspace, setSelectedWorkspace] = useState<string>(() => {
-    try {
-      return localStorage.getItem("selectedWorkspace") || "default";
-    } catch {
-      return "default";
-    }
-  });
-  // 下拉框必须以「后端实际 active」为准：之前 selectedWorkspace 仅从 localStorage
-  // 初始化，会残留旧值（如上次激活过 workspace1），而后端 active 可能已回退 default
-  // → 下拉框显示 workspace1、实际运行时却走默认工作区。挂载时与 workspace-changed
-  // 后用后端 active 校正；手动切换序号防止异步响应覆盖用户刚做的选择。
-  const workspaceActionSeqRef = useRef(0);
-  const syncWorkspaceFromBackend = useCallback(async () => {
-    const seq = workspaceActionSeqRef.current;
-    try {
-      const info = await getActiveWorkspace();
-      if (!info.active) return;
-      if (workspaceActionSeqRef.current !== seq) return; // 用户已手动切换，丢弃过期校正
-      setSelectedWorkspace(info.active);
-      try {
-        localStorage.setItem("selectedWorkspace", info.active);
-      } catch {
-        /* ignore */
-      }
-    } catch {
-      /* 后端不可用时保持当前值 */
-    }
-  }, []);
-
-  useEffect(() => {
-    syncWorkspaceFromBackend();
-    window.addEventListener("workspace-changed", syncWorkspaceFromBackend);
-    return () =>
-      window.removeEventListener("workspace-changed", syncWorkspaceFromBackend);
-  }, [syncWorkspaceFromBackend]);
+  // 工作区选择器已删除（2026-09-25）：后端工作区是单一、路径钉死的，
+  // 没有「切换工作区」这个动作，也没有可下拉的候选列表。
   // 选模型（P1-9）：modelId，持久化到 localStorage；空串 = 跟随激活 provider 默认模型
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     try {
@@ -258,6 +222,11 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     tokenStats,
   } = useChatContext();
 
+  // LangGraph 客户端（ClientProvider 已注入 credentials:"include"，cookie 会带上）。
+  // 「切回会话重新附着」需要它查最近一次 run —— 所以提到这里，而不是留在 600 行
+  // 之后的自动标题段（那里现在只用 pendingTitleTextRef）。
+  const client = useClient();
+
   // ── P1-3 SQL 审批：子 agent run_sql 被闸门 interrupt 后，sync 环路把
   // HITL payload 中继到 async_tasks[task].awaiting_approval，C 方案轮询读到
   // 后在此渲染审批卡；决策经后端恢复端点回传，子 run 自动继续。──────
@@ -333,6 +302,13 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   // （≈12s，覆盖「run 刚发起尚未创建」的竞态）后停止轮询，避免空闲标签页长轮询。
   const quiescentPollsRef = useRef(0);
 
+  // stream 在 SDK 里每次 render 都是**新对象**（引用不稳定），绝不能进 effect 依赖：
+  // 进了的话每个 token 都会重建 interval 并立刻多发一次请求。用 ref 取最新实例。
+  const streamRef = useRef(stream);
+  streamRef.current = stream;
+  // 已经 join 过的 run id —— 同一个 run 不重复 join（每次 join 都会重拉一遍线程历史）。
+  const joinedRunIdRef = useRef<string | null>(null);
+
   // 最后一条消息是不是终稿答复——被打断时不是（停在工具调用/工具结果上）
   const tailIsFinal = useMemo(() => {
     const last = messages[messages.length - 1];
@@ -349,6 +325,29 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     turnStatus?.turn_incomplete === true ||
     turnStatus?.turn_failed === true ||
     turnStatus?.awaiting_interrupt === true;
+
+  // 服务端仍有活跃 run（切回一个仍在执行的会话时成立）→ 一并按「运行中」对待。
+  // 不这样兜底的话：客户端流已被 abort，isLoading 恒 false，界面显示「发送」且没有
+  // 「停止」入口，用户会以为它停了、再发一条（后端 multitask_strategy=enqueue，
+  // 于是排成第二条 run）。
+  const serverRunActive = turnStatus?.has_active_run === true;
+  const runActive = isLoading || serverRunActive;
+  // 「停止」要取消的那条 run：本客户端 submit 的优先，否则是切回来 join 上的那条。
+  const activeRunIdForStop = useCallback(
+    () => joinedRunIdRef.current ?? turnStatus?.active_run_ids?.[0] ?? null,
+    [turnStatus]
+  );
+
+  // 切换会话：清掉上一个会话残留的诊断结论与计数器。ChatProvider 不随 threadId 重新
+  // 挂载，turnStatus 是常驻 state —— 不清的话 A 会话的「已中断（可继续）/执行失败」
+  // 横幅会渲染到 B 会话上，而且 turnStatusSettled 会把 B 的轮询整个短路掉
+  // （B 永远拿不到自己的诊断）。放在轮询 effect 之前：effect 按声明顺序执行，
+  // 保证新会话的第一次 tick 看到的是清空后的状态。
+  useEffect(() => {
+    setTurnStatus(null);
+    quiescentPollsRef.current = 0;
+    joinedRunIdRef.current = null;
+  }, [threadId]);
 
   useEffect(() => {
     if (!threadId || isThreadLoading || !shouldPollTurnStatus || turnStatusSettled) {
@@ -387,6 +386,44 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   useEffect(() => {
     if (isLoading) setTurnStatus(null);
   }, [isLoading]);
+
+  // ── 切回会话时重新附着到那条 run ──
+  // 切换会话会把客户端的 SSE abort 掉。① 之后 run 在服务端继续跑，但本客户端的
+  // messages 停在离开的那一刻、isLoading 也是 false —— 界面看上去「暂停」了。
+  // 这里主动 join 最近一次 run：
+  //   · run 还在跑 → 重新收到后续 token，界面从冻住恢复成运行中；
+  //   · run 已经跑完 → join 立即结束，SDK 的 onSuccess 会 history.mutate(threadId)
+  //     把最终答复刷进消息列表（否则切回来的是一份永不更新的旧转录 —— 今天之所以
+  //     没暴露这个问题，是因为 run 早被 on_disconnect=cancel 打死了）。
+  // 用 runs.list 而不是 run-status 端点：后者只给「活跃」run 的 id，跑完就没了，
+  // 而「跑完后再切回来」恰恰是最常见的路径。
+  // join 不会重放历史消息：本系统不传 stream_resumable，服务端就不缓存 run 消息
+  // （langgraph_api/models/run.py:223 默认 False），SDK 固定带的 lastEventId="-1"
+  // 没有内容可放。
+  // 只在「线程尾部不是终稿答复」时做 —— 健康的老会话不必白拉一遍。
+  useEffect(() => {
+    if (!threadId || isThreadLoading || tailIsFinal) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const runs = await client.runs.list(threadId, { limit: 5 });
+        if (cancelled || !runs?.length) return;
+        // 不依赖服务端返回顺序，自己取 created_at 最新的一条
+        const latest = runs.reduce((a, b) =>
+          (b.created_at ?? "") > (a.created_at ?? "") ? b : a
+        );
+        const runId = latest?.run_id;
+        if (cancelled || !runId || joinedRunIdRef.current === runId) return;
+        joinedRunIdRef.current = runId;
+        await streamRef.current.joinStream(runId);
+      } catch {
+        // fail-open：附不上就维持现状，用户仍可用「继续」按钮
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, isThreadLoading, tailIsFinal, client]);
 
   const pendingApprovals = useMemo(() => {
     if (!asyncTasks || typeof asyncTasks !== "object") return [];
@@ -613,7 +650,6 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   // 提交时 threadId 尚不存在（由 useChat.onThreadId 回写 URL），先把首条文本记入
   // pendingTitleTextRef；threadId 出现后异步生成标题并写回，失败则不写
   // （会话列表自然回退到「首条消息截断」的占位标题）。
-  const client = useClient();
   const pendingTitleTextRef = useRef<string | null>(null);
   useEffect(() => {
     const text = pendingTitleTextRef.current;
@@ -727,9 +763,11 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     if (continuingTurn || submitDisabled) return;
     setContinuingTurn(true);
     try {
-      if (isLoading) {
+      // runActive 而非 isLoading：切回一个服务端仍在跑的会话时 isLoading 是 false，
+      // 但那条 run 还活着 —— 不先取消就 sendMessage，会排成第二条 run（enqueue）。
+      if (runActive) {
         try {
-          await stopStream();
+          await stopStream(activeRunIdForStop());
         } catch {
           /* 上一轮 run 已死，没有活跃流可停 */
         }
@@ -744,8 +782,8 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
       setContinuingTurn(false);
     }
   }, [
-    continuingTurn, submitDisabled, isLoading, stopStream, sendMessage,
-    selectedDb, selectedModel, selectedProvider,
+    continuingTurn, submitDisabled, runActive, activeRunIdForStop, stopStream,
+    sendMessage, selectedDb, selectedModel, selectedProvider,
   ]);
 
   // TODO: can we make this part of the hook?
@@ -1527,6 +1565,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             {modelConfigured === false && (
               <div className="px-[18px] pt-2 text-xs text-amber-600 dark:text-amber-400">
                 尚未配置模型，无法发送消息。请点击右上角「设置」添加可用模型。
+                （模型配置按账号独立，不与其他账号共用）
               </div>
             )}
             <textarea
@@ -1554,18 +1593,6 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                   multiple
                   accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
                   className="hidden"
-                />
-                <WorkspaceSelector
-                  value={selectedWorkspace}
-                  onChange={(v) => {
-                    workspaceActionSeqRef.current += 1;
-                    setSelectedWorkspace(v);
-                    try {
-                      localStorage.setItem("selectedWorkspace", v);
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
                 />
                 <DatabaseSelector
                   value={selectedDb}
@@ -1599,17 +1626,21 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                   selectedProvider={selectedProvider}
                 />
                 <Button
-                  type={isLoading ? "button" : "submit"}
-                  variant={isLoading ? "destructive" : "default"}
-                  className={isLoading ? undefined : "bg-[hsl(180_50%_42%)] hover:bg-[hsl(180_50%_37%)]"}
-                  onClick={isLoading ? stopStream : handleSubmit}
+                  type={runActive ? "button" : "submit"}
+                  variant={runActive ? "destructive" : "default"}
+                  className={runActive ? undefined : "bg-[hsl(180_50%_42%)] hover:bg-[hsl(180_50%_37%)]"}
+                  onClick={
+                    runActive
+                      ? () => stopStream(activeRunIdForStop())
+                      : handleSubmit
+                  }
                   disabled={
-                    !isLoading &&
+                    !runActive &&
                     (submitDisabled ||
                       (!input.trim() && contentBlocks.length === 0))
                   }
                 >
-                  {isLoading ? (
+                  {runActive ? (
                     <>
                       <Square size={14} />
                       <span>停止</span>

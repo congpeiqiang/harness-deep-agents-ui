@@ -178,6 +178,16 @@ const TERMINAL_TASK_STATUSES = new Set([
 
 // auto-continue 只对 success 触发，error/cancelled/timeout/interrupted 不自动续跑
 const AUTO_CONTINUE_STATUSES = new Set(["success"]);
+
+// 掐断 SSE 流 ≠ 取消服务端 run。SDK 默认值来自 stream.lgp:276
+//   onDisconnect = submitOptions?.onDisconnect ?? (streamResumable ? "continue" : "cancel")
+// 而 streamResumable 又取决于 runMetadataStorage —— 本文件 reconnectOnMount:false
+// 时它恒为 null（stream.lgp:104-110），于是**每次 submit 都在告诉服务端「断流即取消」**。
+// 后果：切到别的会话 → SDK 在 threadId 变化时 stream.clear() → abort 掉这条 SSE
+// → 服务端 create_task(cancel_run(...)) 把正在跑的 run 打死（ops.py:3119-3122）。
+// 用户的预期是「切换会话对正在执行的会话没有影响」，所以显式声明 continue：
+// 断流只是断流，run 在服务端继续跑完；切回来靠 joinStream 重新附着（见 ChatInterface）。
+const DISCONNECT_CONTINUE = { onDisconnect: "continue" as const };
 // eslint-disable  Mi80OmFIVnBZMlhrdUp2bG43bmx2TG82YlU1amRRPT06N2RjMGNjZmI=
 
 export function useChat({
@@ -227,6 +237,9 @@ export function useChat({
     }, 0);
   }, []);
 
+  // 最近一次 submit 产生的 run id（来自 onCreated）。「停止」需要它：见 stopStream。
+  const currentRunIdRef = useRef<string | null>(null);
+
   const stream = useStream<StateType>({
     assistantId: activeAssistant?.assistant_id ||
       (typeof window !== "undefined" ? getConfig()?.assistantId : "") || "", // 422 修复: assistant 未加载(null)时回退 config.assistantId(graph 名是后端合法目标)
@@ -241,7 +254,14 @@ export function useChat({
     // Revalidate thread list after paint to avoid blocking the chat UI
     onFinish: scheduleHistoryRevalidate,
     onError: scheduleHistoryRevalidate,
-    onCreated: scheduleHistoryRevalidate,
+    onCreated: (meta: { run_id?: string } | undefined) => {
+      // 记下本次 run 的 id：onDisconnect 改成 "continue" 之后，掐断流不再等于
+      // 取消 run（见 DISCONNECT_CONTINUE），「停止」必须拿这个 id 显式调
+      // client.runs.cancel —— 而 SDK 只在 runMetadataStorage 存在时才代发
+      // （stream.lgp:217-224），本文件里它恒为 null。
+      currentRunIdRef.current = meta?.run_id ?? null;
+      scheduleHistoryRevalidate();
+    },
     experimental_thread: thread,
   });
 
@@ -634,6 +654,7 @@ export function useChat({
             ],
           },
           {
+            ...DISCONNECT_CONTINUE,
             config: {
               ...(activeAssistant?.config ?? {}),
               recursion_limit: 500,
@@ -733,6 +754,7 @@ export function useChat({
       stream.submit(
         { messages: [newMessage] },
         {
+          ...DISCONNECT_CONTINUE,
           optimisticValues: (prev) => ({
             messages: [...(prev.messages ?? []), newMessage],
 
@@ -768,6 +790,7 @@ export function useChat({
     ) => {
       if (checkpoint) {
         stream.submit(undefined, {
+          ...DISCONNECT_CONTINUE,
           ...(optimisticMessages
             ? { optimisticValues: { messages: optimisticMessages } }
             : {}),
@@ -780,7 +803,11 @@ export function useChat({
       } else {
         stream.submit(
           { messages },
-          { config: activeAssistant?.config, interruptBefore: ["tools"] }
+          {
+            ...DISCONNECT_CONTINUE,
+            config: activeAssistant?.config,
+            interruptBefore: ["tools"],
+          }
         );
       }
     },
@@ -800,6 +827,7 @@ export function useChat({
   const continueStream = useCallback(
     (hasTaskToolCall?: boolean) => {
       stream.submit(undefined, {
+        ...DISCONNECT_CONTINUE,
         config: {
           ...(activeAssistant?.config || {}),
           recursion_limit: 500,
@@ -815,23 +843,36 @@ export function useChat({
   );
 
   const markCurrentThreadAsResolved = useCallback(() => {
-    stream.submit(null, { command: { goto: "__end__", update: null } });
+    stream.submit(null, { ...DISCONNECT_CONTINUE, command: { goto: "__end__", update: null } });
     // Update thread list when marking thread as resolved
     onHistoryRevalidate?.();
   }, [stream, onHistoryRevalidate]);
 
   const resumeInterrupt = useCallback(
     (value: any) => {
-      stream.submit(null, { command: { resume: value } });
+      stream.submit(null, { ...DISCONNECT_CONTINUE, command: { resume: value } });
       // Update thread list when resuming from interrupt
       onHistoryRevalidate?.();
     },
     [stream, onHistoryRevalidate]
   );
 
-  const stopStream = useCallback(() => {
+  const stopStream = useCallback((runIdHint?: unknown) => {
+    // 1) 掐断本地流：立刻停掉 token 渲染、按钮回到「发送」。
     stream.stop();
-  }, [stream]);
+    // 2) 显式取消服务端 run：掐流不等于取消（onDisconnect 已是 "continue"）。
+    //    runIdHint 用于「切回一个仍在跑的会话」—— 那条 run 不是本客户端 submit 的，
+    //    currentRunIdRef 里没有它，id 由调用方从 run-status / runs.list 带进来。
+    //    参数类型故意是 unknown：stopStream 也会被当 onClick 直接传，
+    //    那时拿到的是 MouseEvent —— 必须挡掉，否则会把事件对象当 run id 发给后端。
+    const hinted = typeof runIdHint === "string" && runIdHint ? runIdHint : null;
+    const rid = currentRunIdRef.current ?? hinted;
+    currentRunIdRef.current = null;
+    if (rid && threadId) {
+      // 失败无所谓（run 可能已终态），catch 掉别让「停止」报错。
+      void client.runs.cancel(threadId, rid).catch(() => {});
+    }
+  }, [stream, client, threadId]);
 
   // ── 查询进行中信号的基础数据 ──
   const effectiveSubagentSteps =

@@ -6,7 +6,6 @@ import {
   Cpu,
   Database,
   Gauge,
-  Layers,
   Search,
   Server,
   ShieldCheck,
@@ -33,7 +32,6 @@ import { ModelConfigPanel } from "./ModelConfigDialog";
 import { DbConfigPanel } from "./DbConfigDialog";
 import { EvalFlagsPanel } from "./EvalFlagsPanel";
 import { SemanticLibraryPanel } from "./SemanticLibraryPanel";
-import { WorkspacePanel } from "./WorkspacePanel";
 import { UserManagementPanel } from "./UserManagementPanel";
 import type { AuthUser } from "@/lib/authApi";
 
@@ -53,7 +51,6 @@ type TabId =
   | "sql"
   | "eval"
   | "semantic"
-  | "workspace"
   | "users"
   | "deploy";
 
@@ -70,7 +67,6 @@ const BASE_TABS: TabDef[] = [
   { id: "thinking", label: "深度思考", icon: BrainCircuit },
   { id: "sql", label: "SQL审批", icon: ShieldCheck },
   { id: "semantic", label: "语义库", icon: BookOpen },
-  { id: "workspace", label: "工作区", icon: Layers },
   { id: "deploy", label: "部署 URL和助手 ID", icon: Server },
 ];
 
@@ -146,8 +142,11 @@ export function SettingsDialog({
   };
 
   const saveDeploy = () => {
-    if (!deploymentUrl || !assistantId) {
-      alert("请填写所有必填字段");
+    // 部署 URL **允许留空**（2026-09-25）：留空 = 跟随当前访问地址
+    // （`window.location.origin`，见 lib/deploymentUrl.ts）。原来这里强制必填，
+    // 而页面里又各处兜底成 localhost:2026 —— 对别人的浏览器指向用户自己的机器。
+    if (!assistantId) {
+      alert("请填写助手 ID");
       return;
     }
     const base = getConfig() ?? config ?? { deploymentUrl: "", assistantId: "" };
@@ -273,16 +272,6 @@ export function SettingsDialog({
               />
             </div>
 
-            <div className={cn("flex flex-col gap-3", activeTab !== "workspace" && "hidden")}>
-              <h3 className="text-base font-semibold">工作区</h3>
-              <WorkspacePanel
-                active
-                onChanged={() =>
-                  window.dispatchEvent(new CustomEvent("workspace-changed"))
-                }
-              />
-            </div>
-
             <div className={cn("flex flex-col gap-3", activeTab !== "users" && "hidden")}>
               <h3 className="text-base font-semibold">用户管理</h3>
               <UserManagementPanel active={activeTab === "users"} />
@@ -293,12 +282,19 @@ export function SettingsDialog({
                 <h3 className="text-base font-semibold">部署 URL和助手 ID</h3>
                 <p className="text-xs text-muted-foreground">
                   配置智能体后端部署地址与助手标识，保存在浏览器本地存储。修改后立即生效并重新连接。
+                  <br />
+                  <span className="text-foreground/80">
+                    部署 URL{" "}
+                    <strong>留空即可</strong>
+                    （默认跟随当前访问地址，即你打开页面用的这个入口）。只有当前端与后端不在同一个入口时
+                    才需要显式填写，例如直接连后端端口。
+                  </span>
                 </p>
                 <div className="grid gap-2">
                   <Label htmlFor="deploymentUrl">部署 URL</Label>
                   <Input
                     id="deploymentUrl"
-                    placeholder="https://<部署地址>"
+                    placeholder="留空 = 跟随当前访问地址"
                     value={deploymentUrl}
                     onChange={(e) => setDeploymentUrl(e.target.value)}
                   />

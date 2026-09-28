@@ -1,3 +1,5 @@
+import { resolveDeploymentUrl } from "@/lib/deploymentUrl";
+
 export interface StandaloneConfig {
   deploymentUrl: string;
   assistantId: string;
@@ -58,7 +60,19 @@ export function getConfig(): StandaloneConfig | null {
   if (!stored) return null;
 
   try {
-    return JSON.parse(stored);
+    const parsed = JSON.parse(stored) as StandaloneConfig;
+    // ⚠️ 存储里的 deploymentUrl 允许是**空串**（= 跟随当前访问地址，语义见 lib/deploymentUrl.ts）。
+    // 这里统一解析成**可直接使用的绝对地址**再交给调用方 —— 历史上十几个 API 客户端
+    // （useThreads / modelConfigs / dbConfig / threadRunStatus / semanticApi / feedback …）
+    // 各自写了 `cfg?.deploymentUrl || "http://localhost:2026"` 这类兜底，而 `:2026` 只绑回环：
+    // 对**别人的浏览器**来说 localhost 是他自己的机器 ⇒ 页面能开、但对话列表 "Failed to fetch"、
+    // 模型列表读空 ⇒ 界面误报「尚未配置模型，无法发送消息」。
+    // 2026-09-28 清浏览器缓存（清掉 localStorage ⇒ deploymentUrl 归空）后生产实测复现。
+    // ⇒ 解析只在这一处做，调用方拿到的永远是可用的绝对地址（那些 localhost 兜底从此是死分支）。
+    return {
+      ...parsed,
+      deploymentUrl: resolveDeploymentUrl(parsed.deploymentUrl),
+    };
   } catch {
     return null;
   }
@@ -67,5 +81,12 @@ export function getConfig(): StandaloneConfig | null {
 
 export function saveConfig(config: StandaloneConfig): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+  // 与 getConfig 的解析互为逆运算：值恰好等于**当前 origin** 时按空串存（= 跟随当前访问地址）。
+  // 否则 `saveConfig({ ...getConfig(), ... })` 这类"读出来改一格再存回"的写法会把解析出的绝对地址
+  // 固化进 localStorage —— 换个 host/端口（或走 https）访问就失效。旧的 ":2026" 事故正是这样留下的。
+  const next = { ...config };
+  if (next.deploymentUrl && next.deploymentUrl === window.location.origin) {
+    next.deploymentUrl = "";
+  }
+  localStorage.setItem(CONFIG_KEY, JSON.stringify(next));
 }

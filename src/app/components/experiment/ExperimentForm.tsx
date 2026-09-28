@@ -129,13 +129,12 @@ export default function ExperimentForm({
       }
     };
     load();
+    // 原「workspace-changed 也重新 load」已删除（2026-09-25）：工作区不再可切换。
     const onChanged = () => load();
     window.addEventListener("databases-changed", onChanged);
-    window.addEventListener("workspace-changed", onChanged);
     return () => {
       alive = false;
       window.removeEventListener("databases-changed", onChanged);
-      window.removeEventListener("workspace-changed", onChanged);
     };
   }, []);
 

@@ -12,7 +12,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { WorkspaceBadge } from "./WorkspaceBadge";
 import { KnowledgeEditor } from "./KnowledgeEditor";
 import {
   listSemanticProjects,
@@ -135,11 +134,7 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
     refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    const onWsChanged = () => refresh();
-    window.addEventListener("workspace-changed", onWsChanged);
-    return () => window.removeEventListener("workspace-changed", onWsChanged);
-  }, [refresh]);
+  // 原「工作区切换 → 刷新」监听已删除（2026-09-25）：工作区不再可切换。
 
   // 监听「从数据库卡片创建语义库」事件
   useEffect(() => {
@@ -494,7 +489,6 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
           新增/删除后需重启后端，Wren 语义工具才生效。
         </p>
         <div className="flex items-center gap-2">
-          <WorkspaceBadge />
           <Button size="sm" onClick={() => setAddMode("ai")}>
             + 添加
           </Button>

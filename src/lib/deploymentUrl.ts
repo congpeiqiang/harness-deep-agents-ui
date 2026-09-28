@@ -16,6 +16,18 @@
  *
  * ⚠️ 必须走这个函数，不要再在页面里写 `|| "http://localhost:2026"` 这类兜底 ——
  * 一处写错就等于把上面这些全绕过去。
+ *
+ * **2026-09-28 加固：唯一的强制点挪到了 `lib/config.ts`** —— `getConfig()` 返回的
+ * `deploymentUrl` **已经解析过**（空串 → `window.location.origin`），`saveConfig()` 做逆运算
+ * （值等于当前 origin 时按空串存）。原因是「走这个函数」只靠自觉：当时全仓有 **15 处**
+ * `cfg?.deploymentUrl || "http://localhost:2026"`（modelConfigs / dbConfig / threadRunStatus /
+ * semanticApi / feedback / workspace / useThreads 的 SDK `apiUrl` …）从来没走过这里。
+ * 用户「清一下浏览器缓存」⇒ localStorage 清空 ⇒ deploymentUrl 归空 ⇒ 这 15 处全部静默指向
+ * 用户自己的 localhost ⇒ 侧栏「加载对话列表失败 / Failed to fetch」+ 误报「尚未配置模型」，
+ * 而同一时刻 `/api/auth/me`、`/assistants/search`（走相对路径 / ClientProvider）却都正常。
+ * ⇒ 兜底解析现在**不可能**被绕过；上面那些 `|| localhost` 分支是死代码，新代码不要模仿。
+ *
+ * 于是「清浏览器缓存」不再是故障路径：存储里留空串即表示跟随入口，换个 host/端口访问也不会失效。
  */
 export function resolveDeploymentUrl(configured?: string | null): string {
   const trimmed = (configured ?? "").trim().replace(/\/+$/, "");
