@@ -3,6 +3,7 @@
 
 import { createContext, useContext, useMemo, ReactNode } from "react";
 import { Client } from "@langchain/langgraph-sdk";
+import { resolveDeploymentUrl } from "@/lib/deploymentUrl";
 
 interface ClientContextValue {
   client: Client;
@@ -24,7 +25,9 @@ export function ClientProvider({
 }: ClientProviderProps) {
   const client = useMemo(() => {
     return new Client({
-      apiUrl: deploymentUrl,
+      // 留空 → window.location.origin（见 lib/deploymentUrl.ts）：SDK 拿到空串就是
+      // 满屏「模型都没了 / Failed to fetch」，所以这里是兜底的**最后一道**，不能省
+      apiUrl: resolveDeploymentUrl(deploymentUrl),
       defaultHeaders: {
         "Content-Type": "application/json",
         "X-Api-Key": apiKey,

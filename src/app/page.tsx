@@ -4,7 +4,8 @@
 import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { useQueryState } from "nuqs";
 import { getConfig, saveConfig, StandaloneConfig } from "@/lib/config";
-import { ConfigDialog } from "@/app/components/ConfigDialog";
+import { resolveDeploymentUrl } from "@/lib/deploymentUrl";
+import { ConfigBootstrap } from "@/app/components/ConfigBootstrap";
 import { SettingsDialog } from "@/app/components/SettingsDialog";
 import { Button } from "@/components/ui/button";
 import { Assistant } from "@langchain/langgraph-sdk";
@@ -57,7 +58,7 @@ function HomePageInner({
     let cancelled = false;
     (async () => {
       try {
-        const base = (config.deploymentUrl || "http://localhost:2026").replace(/\/+$/, "");
+        const base = resolveDeploymentUrl(config.deploymentUrl);
         const res = await fetch(
           `${base}/threads/${encodeURIComponent(threadId)}/state`,
           { credentials: "include" }
@@ -187,7 +188,7 @@ function HomePageInner({
               title={threadId ? "下载当前会话日志（JSON）" : "请先开启一个会话"}
               onClick={() => {
                 if (!threadId) return;
-                window.location.href = `${config.deploymentUrl}/api/threads/${threadId}/export?format=json`;
+                window.location.href = `${resolveDeploymentUrl(config.deploymentUrl)}/api/threads/${threadId}/export?format=json`;
               }}
             >
               <Download className="mr-2 h-4 w-4" />
@@ -283,7 +284,9 @@ function HomePageContent() {
   const [assistantId, setAssistantId] = useQueryState("assistantId");
   const [currentUser, setCurrentUser] = useState<AuthUser | undefined>();
 
-  // On mount, check for saved config, otherwise show config dialog
+  // On mount, check for saved config. 本地无配置时**不再直接弹窗**（2026-09-28）：
+  // 交给下面的 <ConfigBootstrap> 在登录之后自动探测（部署 URL 留空 + 服务端给的助手 ID），
+  // 只有探测失败才回落到手动配置弹窗。
   useEffect(() => {
     const savedConfig = getConfig();
     if (savedConfig) {
@@ -291,8 +294,6 @@ function HomePageContent() {
       if (!assistantId) {
         setAssistantId(savedConfig.assistantId);
       }
-    } else {
-      setConfigDialogOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -313,28 +314,14 @@ function HomePageContent() {
     config?.langsmithApiKey || process.env.NEXT_PUBLIC_LANGSMITH_API_KEY || "";
 
   if (!config) {
+    // 首屏（本地无配置）：**先登录 → 自动配置 → 直接进聊天页**（2026-09-28）。
+    // AuthGuard 必须在最外层：探测端点 `GET /api/deployment-info` 需登录
+    // （刻意不在 auth 白名单里），而原先把配置弹窗放在 AuthGuard 之外 ⇒
+    // 未登录就先问用户要「部署 URL / 助手 ID」，两个都是用户给不出来的东西。
     return (
-      <>
-        <ConfigDialog
-          open={configDialogOpen}
-          onOpenChange={setConfigDialogOpen}
-          onSave={handleSaveConfig}
-        />
-        <div className="flex h-screen items-center justify-center">
-          <div className="text-center">
-            <h1 className="text-2xl font-bold">欢迎使用深度智能体</h1>
-            <p className="mt-2 text-muted-foreground">
-              请配置您的部署以开始使用
-            </p>
-            <Button
-              onClick={() => setConfigDialogOpen(true)}
-              className="mt-4"
-            >
-              打开配置
-            </Button>
-          </div>
-        </div>
-      </>
+      <AuthGuard onUser={setCurrentUser}>
+        <ConfigBootstrap onReady={handleSaveConfig} />
+      </AuthGuard>
     );
   }
 

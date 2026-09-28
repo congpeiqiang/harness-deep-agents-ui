@@ -17,13 +17,15 @@ import { toast } from "sonner";
 import { FileViewDialog } from "@/app/components/FileViewDialog";
 import type { FileItem } from "@/app/types/types";
 import { getConfig } from "@/lib/config";
+import { resolveDeploymentUrl } from "@/lib/deploymentUrl";
 
 // NOTE  MC80OmFIVnBZMlhrdUp2bG43bmx2TG82TlRSWlVnPT06ZThlOGVkYTQ=
 
 const apiBase = (): string => {
   const cfg = getConfig();
-  const base = cfg?.deploymentUrl || "http://localhost:2026";
-  return base.replace(/\/+$/, "");
+  // 留空 = window.location.origin（见 lib/deploymentUrl.ts）；旧的 "http://localhost:2026"
+  // 兜底对别人的浏览器指向用户自己的机器 ⇒ 「模型都没了 + Failed to fetch」
+  return resolveDeploymentUrl(cfg?.deploymentUrl);
 };
 
 /**

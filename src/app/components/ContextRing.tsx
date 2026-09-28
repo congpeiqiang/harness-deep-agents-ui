@@ -3,6 +3,7 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { useChatContext } from "@/providers/ChatProvider";
 import { getConfig } from "@/lib/config";
+import { resolveDeploymentUrl } from "@/lib/deploymentUrl";
 import { listModelConfigs, type ModelInfo } from "@/lib/modelConfigs";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
@@ -94,15 +95,16 @@ export function ContextRing({ selectedModel, selectedProvider }: ContextRingProp
     setCompactResult(null);
     try {
       const config = getConfig();
-      const baseUrl = config?.deploymentUrl || "";
+      // 留空 = window.location.origin（见 lib/deploymentUrl.ts）⇒ 不再是「未配置部署地址」的死路
+      const baseUrl = resolveDeploymentUrl(config?.deploymentUrl);
       if (!baseUrl) {
         setCompactResult("未配置部署地址");
         return;
       }
-      const res = await fetch(
-        `${baseUrl.replace(/\/$/, "")}/api/threads/${threadId}/compact`,
-        { method: "POST", credentials: "include" }
-      );
+      const res = await fetch(`${baseUrl}/api/threads/${threadId}/compact`, {
+        method: "POST",
+        credentials: "include",
+      });
       const data = await res.json();
       if (data.ok && !data.skipped) {
         setCompactResult(

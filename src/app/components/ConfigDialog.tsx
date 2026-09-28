@@ -42,15 +42,21 @@ export function ConfigDialog({
 
   useEffect(() => {
     if (open && initialConfig) {
-      setDeploymentUrl(initialConfig.deploymentUrl);
-      setAssistantId(initialConfig.assistantId);
+      // `|| ""`：首次配置时这些字段可能是 undefined，直接塞进受控 input 会让 React
+      // 从非受控变受控（控制台警告 + 输入行为异常）
+      setDeploymentUrl(initialConfig.deploymentUrl || "");
+      setAssistantId(initialConfig.assistantId || "");
       setLangsmithApiKey(initialConfig.langsmithApiKey || "");
     }
   }, [open, initialConfig]);
 
   const handleSave = () => {
-    if (!deploymentUrl || !assistantId) {
-      alert("请填写所有必填字段");
+    // 部署 URL **允许留空**（2026-09-25）：留空 = 跟随当前访问地址
+    // （`window.location.origin`，见 lib/deploymentUrl.ts）—— 页面从哪个入口发下来就用哪个，
+    // 换域名/端口/https 都不用改配置。原来强制必填，而各处又兜底 localhost:2026，
+    // 对别人的浏览器指向用户自己的机器（「模型都没了 + Failed to fetch」）。
+    if (!assistantId) {
+      alert("请填写助手 ID");
       return;
     }
 
@@ -76,10 +82,13 @@ export function ConfigDialog({
         </DialogHeader>
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
-            <Label htmlFor="deploymentUrl">部署 URL</Label>
+            <Label htmlFor="deploymentUrl">
+              部署 URL{" "}
+              <span className="text-muted-foreground">(留空 = 跟随当前访问地址)</span>
+            </Label>
             <Input
               id="deploymentUrl"
-              placeholder="https://<部署地址>"
+              placeholder="留空 = 跟随当前访问地址"
               value={deploymentUrl}
               onChange={(e) => setDeploymentUrl(e.target.value)}
             />
