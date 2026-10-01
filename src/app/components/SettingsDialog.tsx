@@ -142,13 +142,11 @@ export function SettingsDialog({
   };
 
   const saveDeploy = () => {
-    // 部署 URL **允许留空**（2026-09-25）：留空 = 跟随当前访问地址
-    // （`window.location.origin`，见 lib/deploymentUrl.ts）。原来这里强制必填，
-    // 而页面里又各处兜底成 localhost:2026 —— 对别人的浏览器指向用户自己的机器。
-    if (!assistantId) {
-      alert("请填写助手 ID");
-      return;
-    }
+    // 这两项**由服务端下发、界面上不可编辑**（2026-10-01 用户要求）：默认已经填好了，
+    // 允许二次编辑只会让人把一个错的值存进 localStorage，静默把前端连到别的后端。
+    // 这里只负责把当前值落盘并重连。
+    // （部署 URL 允许为空 = 跟随当前访问地址，语义见 lib/deploymentUrl.ts。）
+    if (!assistantId) return; // 按钮已 disabled，这里只兜一层
     const base = getConfig() ?? config ?? { deploymentUrl: "", assistantId: "" };
     onSaveConfig?.({ ...base, deploymentUrl, assistantId });
   };
@@ -281,35 +279,48 @@ export function SettingsDialog({
               <div className="flex flex-col gap-3">
                 <h3 className="text-base font-semibold">部署 URL和助手 ID</h3>
                 <p className="text-xs text-muted-foreground">
-                  配置智能体后端部署地址与助手标识，保存在浏览器本地存储。修改后立即生效并重新连接。
+                  这两项在登录后由服务端自动下发（见{" "}
+                  <code>GET /api/deployment-info</code>）并保存在浏览器本地存储，
+                  <strong>不支持手动修改</strong>——填错会连不上后端。此处仅供查看核对。
                   <br />
                   <span className="text-foreground/80">
                     部署 URL{" "}
-                    <strong>留空即可</strong>
-                    （默认跟随当前访问地址，即你打开页面用的这个入口）。只有当前端与后端不在同一个入口时
-                    才需要显式填写，例如直接连后端端口。
+                    <strong>留空即跟随当前访问地址</strong>
+                    （也就是你打开页面用的这个入口）；只有前端与后端不在同一个入口时才需要显式指定，
+                    那种部署由运维在服务端配置，不在这个界面改。
                   </span>
                 </p>
                 <div className="grid gap-2">
                   <Label htmlFor="deploymentUrl">部署 URL</Label>
                   <Input
                     id="deploymentUrl"
+                    readOnly
+                    title="由服务端下发，不支持手动修改"
+                    className="cursor-not-allowed bg-muted text-muted-foreground"
                     placeholder="留空 = 跟随当前访问地址"
                     value={deploymentUrl}
-                    onChange={(e) => setDeploymentUrl(e.target.value)}
                   />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="assistantId">助手 ID</Label>
                   <Input
                     id="assistantId"
+                    readOnly
+                    title="由服务端下发，不支持手动修改"
+                    className="cursor-not-allowed bg-muted text-muted-foreground"
                     placeholder="<助手ID>"
                     value={assistantId}
-                    onChange={(e) => setAssistantId(e.target.value)}
                   />
                 </div>
+                {!assistantId && (
+                  <p className="text-xs text-destructive">
+                    未取到助手 ID（服务端探测失败）：请刷新页面重新初始化；仍不行请联系管理员。
+                  </p>
+                )}
                 <div className="flex justify-end">
-                  <Button onClick={saveDeploy}>保存</Button>
+                  <Button onClick={saveDeploy} disabled={!assistantId}>
+                    保存
+                  </Button>
                 </div>
               </div>
             )}

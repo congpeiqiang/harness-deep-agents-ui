@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -84,6 +84,10 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
     db_type: string;
   } | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
+  // 字段级选择：hiddenCols 的键是 `${表}\u0000${列}`（见 colKey），为空 = 该表全列可见。
+  // 只记「被隐藏的列」，因为默认态是全可见，这样 payload 和重置逻辑都最小。
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
+  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
 
   // Git 导入
   const [gitUrl, setGitUrl] = useState("");
@@ -347,17 +351,75 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
     }
   };
 
+  const toggleColumn = (table: string, col: string) => {
+    setHiddenCols((prev) => {
+      const next = new Set(prev);
+      const k = colKey(table, col);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
+
+  const toggleAllColumns = (table: string, selectAll: boolean) => {
+    const t = introspectData?.tables.find((x) => x.name === table);
+    if (!t) return;
+    const locked = lockedColumns(
+      introspectData?.tables || [],
+      introspectData?.foreign_keys || [],
+      selectedTables
+    );
+    setHiddenCols((prev) => {
+      const next = new Set(prev);
+      for (const c of t.columns || []) {
+        const k = colKey(table, c.name);
+        // 结构列不吃「全不选」—— 它在界面上是灰的，状态也必须跟着灰
+        if (locked.has(k)) continue;
+        if (selectAll) next.delete(k);
+        else next.add(k);
+      }
+      return next;
+    });
+  };
+
+  const toggleExpanded = (table: string) => {
+    setExpandedTables((prev) => {
+      const next = new Set(prev);
+      if (next.has(table)) next.delete(table);
+      else next.add(table);
+      return next;
+    });
+  };
+
   const doGenerateModels = async () => {
     if (selectedTables.size === 0) {
       setError("至少选择一张表");
       return;
     }
     await runOp("generate", async () => {
+      // 只装有「取消勾选」的表；没被隐藏任何列的表整个省略 ⇒ payload 最小，
+      // 后端见到「缺省的表」就按全列可见处理（与旧行为一致）。
+      const eff = effectiveHiddenKeys(
+        introspectData?.tables || [],
+        introspectData?.foreign_keys || [],
+        selectedTables,
+        hiddenCols
+      );
+      const selectedColumns: Record<string, string[]> = {};
+      for (const t of introspectData?.tables || []) {
+        if (!selectedTables.has(t.name)) continue;
+        const cols = t.columns || [];
+        const visible = cols.filter((c) => !eff.has(colKey(t.name, c.name)));
+        if (visible.length !== cols.length) selectedColumns[t.name] = visible.map((c) => c.name);
+      }
       const r = await generateModels(createdProjectName, {
         selected_tables: Array.from(selectedTables),
         include_relationships: true,
         db_name: createDbName,
-      });
+        ...(Object.keys(selectedColumns).length > 0
+          ? { selected_columns: selectedColumns }
+          : {}),
+      } as Parameters<typeof generateModels>[1]);
       if (!r.ok) {
         setError(r.error || "生成失败");
         return;
@@ -473,6 +535,8 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
     setCreatedProjectName("");
     setIntrospectData(null);
     setSelectedTables(new Set());
+    setHiddenCols(new Set());
+    setExpandedTables(new Set());
     setAddMode(null);
   };
 
@@ -605,6 +669,8 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
                 dbOptions={dbOptions}
                 introspectData={introspectData}
                 selectedTables={selectedTables}
+                hiddenCols={hiddenCols}
+                expandedTables={expandedTables}
                 busy={busy}
                 busyOp={busyOp}
                 onSetDbName={setCreateDbName}
@@ -614,6 +680,9 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
                 onIntrospect={doIntrospect}
                 onToggleTable={toggleTable}
                 onToggleAll={toggleAllTables}
+                onToggleColumn={toggleColumn}
+                onToggleAllColumns={toggleAllColumns}
+                onToggleExpand={toggleExpanded}
                 onGenerate={doGenerateModels}
                 onApply={doApplyToProject}
                 onPush={() => {
@@ -766,6 +835,7 @@ function ProjectCard({
   onSaved: () => void;
 }) {
   const isGit = p.source === "git";
+  const [adjusting, setAdjusting] = useState(false);
   const myBuildBusy = busyOp === `build-${p.name}`;
   const myValidateBusy = busyOp === `validate-${p.name}`;
   const myPullBusy = busyOp === `pull-${p.name}`;
@@ -843,6 +913,16 @@ function ProjectCard({
           >
             📝 编辑知识
           </Button>
+          {/* 已有库也能改「基于哪些表/字段」：默认原地打标（不重写文件、不丢手改描述） */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => setAdjusting(true)}
+            disabled={busy}
+          >
+            ⚙️ 调整模型
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -906,6 +986,20 @@ function ProjectCard({
             onClose={onEdit}
             onSaved={onSaved}
           />
+        </div>
+      )}
+
+      {/* 调整表/字段（弹层；保存后 onSaved 刷新列表） */}
+      {adjusting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-2xl rounded-lg border bg-background p-4 shadow-lg">
+            <AdjustModelsDialog
+              projectName={p.name}
+              projectLabel={p.project_name}
+              onSaved={onSaved}
+              onClose={() => setAdjusting(false)}
+            />
+          </div>
         </div>
       )}
     </div>
@@ -982,6 +1076,235 @@ function AddDialog({
 
 // ── 新建流程对话框 ───────────────────────────────────────────
 
+/* ── 表/字段选择（新建流程与「调整模型」共用）─────────────────────────────
+ *
+ * 隐藏字段用 wren 原生的 `is_hidden` 表达（后端写进 metadata.yml）。
+ * **结构列必须保持可见**：主键列、以及被自动生成的外键关系引用的列。
+ * 实测隐藏被关系引用的列之后，`wren context build` 照样成功，但之后**每次 JOIN**
+ * 都会报 `No field named …` —— 是个构建期看不出来的坏库，所以这里禁用勾选。
+ */
+
+/** 列的唯一键（表名可能与列名同形，必须拼起来） */
+const colKey = (table: string, col: string) => `${table}\u0000${col}`;
+
+/** 结构列 = 主键 或 被「两端都已选中」的外键引用；返回 键 -> 原因 */
+function lockedColumns(
+  tables: IntrospectTable[],
+  foreignKeys: IntrospectForeignKey[],
+  selectedTables: Set<string>
+): Map<string, string> {
+  const locked = new Map<string, string>();
+  for (const t of tables) {
+    if (!selectedTables.has(t.name)) continue;
+    for (const pk of t.primary_key || []) locked.set(colKey(t.name, pk), "主键");
+  }
+  for (const fk of foreignKeys) {
+    if (!selectedTables.has(fk.source_table) || !selectedTables.has(fk.target_table)) {
+      continue;
+    }
+    locked.set(colKey(fk.source_table, fk.source_column), "表关联");
+    locked.set(colKey(fk.target_table, fk.target_column), "表关联");
+  }
+  return locked;
+}
+
+/**
+ * 实际会被隐藏的列键集合 = 用户勾掉的，减去结构列。
+ *
+ * 为什么必须减：hiddenCols 是「用户动作」的记录，而结构列集合随选表变化。
+ * 先取消勾选 B 表（外键不再成立）、隐藏 A.a_id，再把 B 选回来 —— 这时 a_id
+ * 又变回结构列，但键还留在 hiddenCols 里。若直接把它发出去，后端校验会 400。
+ * 界面（isVisible）与 payload 都必须走同一个口径，否则「灰掉的列」和
+ * 「真正提交的列」会不一致。
+ */
+function effectiveHiddenKeys(
+  tables: IntrospectTable[],
+  foreignKeys: IntrospectForeignKey[],
+  selectedTables: Set<string>,
+  hiddenCols: Set<string>
+): Set<string> {
+  const locked = lockedColumns(tables, foreignKeys, selectedTables);
+  const eff = new Set<string>();
+  for (const t of tables) {
+    if (!selectedTables.has(t.name)) continue;
+    for (const c of t.columns || []) {
+      const k = colKey(t.name, c.name);
+      if (!locked.has(k) && hiddenCols.has(k)) eff.add(k);
+    }
+  }
+  return eff;
+}
+
+/** 按所选表与外键算出「会写进 relationships.yml」的关系条数（给用户一个预览） */
+function plannedRelationships(
+  foreignKeys: IntrospectForeignKey[],
+  selectedTables: Set<string>
+): number {
+  const seen = new Set<string>();
+  for (const fk of foreignKeys) {
+    if (!selectedTables.has(fk.source_table) || !selectedTables.has(fk.target_table)) {
+      continue;
+    }
+    const a = fk.source_table.toLowerCase();
+    const b = fk.target_table.toLowerCase();
+    if (a === b) continue;
+    seen.add([a, b].sort().join("|"));
+  }
+  return seen.size;
+}
+
+function TableSelectionList({
+  tables,
+  foreignKeys,
+  selectedTables,
+  hiddenCols,
+  expandedTables,
+  onToggleTable,
+  onToggleAllTables,
+  onToggleColumn,
+  onToggleAllColumns,
+  onToggleExpand,
+  maxHeightClass = "max-h-[200px]",
+}: {
+  tables: IntrospectTable[];
+  foreignKeys: IntrospectForeignKey[];
+  selectedTables: Set<string>;
+  hiddenCols: Set<string>;
+  expandedTables: Set<string>;
+  onToggleTable: (name: string) => void;
+  onToggleAllTables: () => void;
+  onToggleColumn: (table: string, col: string) => void;
+  onToggleAllColumns: (table: string, selectAll: boolean) => void;
+  onToggleExpand: (table: string) => void;
+  maxHeightClass?: string;
+}) {
+  const locked = lockedColumns(tables, foreignKeys, selectedTables);
+  // 结构列一律按「可见」处理 —— 即使它曾被勾掉（对端表后来又被选回来），
+  // 也自动恢复可见，绝不会把坏库发出去
+  const isVisible = (table: string, col: string) => {
+    const k = colKey(table, col);
+    return locked.has(k) || !hiddenCols.has(k);
+  };
+
+  return (
+    <div className={cn("overflow-auto rounded border", maxHeightClass)}>
+      <table className="w-full text-left text-xs">
+        <thead className="sticky top-0 bg-muted/60">
+          <tr>
+            <th className="px-2 py-1 w-8">
+              <input
+                type="checkbox"
+                checked={selectedTables.size === tables.length && tables.length > 0}
+                onChange={onToggleAllTables}
+              />
+            </th>
+            <th className="px-2 py-1 w-6" />
+            <th className="px-2 py-1">表名</th>
+            <th className="px-2 py-1">列数</th>
+            <th className="px-2 py-1">注释</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tables.map((t) => {
+            const picked = selectedTables.has(t.name);
+            const open = expandedTables.has(t.name);
+            const cols = t.columns || [];
+            const hiddenCount = cols.filter((c) => !isVisible(t.name, c.name)).length;
+            return (
+              <Fragment key={t.name}>
+                <tr className="border-t">
+                  <td className="px-2 py-1">
+                    <input
+                      type="checkbox"
+                      checked={picked}
+                      onChange={() => onToggleTable(t.name)}
+                    />
+                  </td>
+                  <td className="px-2 py-1">
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                      disabled={!picked || cols.length === 0}
+                      title="展开选择字段"
+                      onClick={() => onToggleExpand(t.name)}
+                    >
+                      {open ? "▾" : "▸"}
+                    </button>
+                  </td>
+                  <td className="px-2 py-1 font-medium">{t.name}</td>
+                  <td className="px-2 py-1 text-muted-foreground">
+                    {t.column_count}
+                    {picked && hiddenCount > 0 && (
+                      <span className="ml-1 text-amber-600">（隐藏 {hiddenCount}）</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1 truncate max-w-[100px] text-muted-foreground">
+                    {t.comment || "-"}
+                  </td>
+                </tr>
+                {picked && open && (
+                  <tr className="border-t bg-muted/20">
+                    <td />
+                    <td colSpan={4} className="px-2 py-2">
+                      <div className="mb-1 flex items-center gap-2">
+                        <span className="text-muted-foreground">
+                          字段（取消勾选 = 该字段对模型不可见）
+                        </span>
+                        <button
+                          type="button"
+                          className="text-primary hover:underline"
+                          onClick={() => onToggleAllColumns(t.name, true)}
+                        >
+                          全选
+                        </button>
+                        <button
+                          type="button"
+                          className="text-primary hover:underline"
+                          onClick={() => onToggleAllColumns(t.name, false)}
+                        >
+                          全不选
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-3">
+                        {cols.map((c) => {
+                          const lockReason = locked.get(colKey(t.name, c.name));
+                          return (
+                            <label
+                              key={c.name}
+                              className={cn(
+                                "flex items-center gap-1 truncate",
+                                lockReason ? "text-muted-foreground" : "cursor-pointer"
+                              )}
+                              title={
+                                lockReason
+                                  ? `结构列（${lockReason}），不能隐藏 —— 隐藏后表关联查询会失败`
+                                  : c.comment || c.name
+                              }
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isVisible(t.name, c.name)}
+                                disabled={!!lockReason}
+                                onChange={() => onToggleColumn(t.name, c.name)}
+                              />
+                              <span className="truncate">{c.name}</span>
+                              {lockReason && <span className="shrink-0">🔒</span>}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function CreateFlowDialog({
   step,
   dbName,
@@ -990,6 +1313,8 @@ function CreateFlowDialog({
   dbOptions,
   introspectData,
   selectedTables,
+  hiddenCols,
+  expandedTables,
   busy,
   busyOp,
   onSetDbName,
@@ -999,6 +1324,9 @@ function CreateFlowDialog({
   onIntrospect,
   onToggleTable,
   onToggleAll,
+  onToggleColumn,
+  onToggleAllColumns,
+  onToggleExpand,
   onGenerate,
   onApply,
   onPush,
@@ -1015,6 +1343,8 @@ function CreateFlowDialog({
     db_type: string;
   } | null;
   selectedTables: Set<string>;
+  hiddenCols: Set<string>;
+  expandedTables: Set<string>;
   busy: boolean;
   busyOp: string;
   onSetDbName: (v: string) => void;
@@ -1024,11 +1354,23 @@ function CreateFlowDialog({
   onIntrospect: () => void;
   onToggleTable: (name: string) => void;
   onToggleAll: () => void;
+  onToggleColumn: (table: string, col: string) => void;
+  onToggleAllColumns: (table: string, selectAll: boolean) => void;
+  onToggleExpand: (table: string) => void;
   onGenerate: () => void;
   onApply: () => void;
   onPush: () => void;
   onClose: () => void;
 }) {
+  // 真正会提交的隐藏列数（结构列不算），给用户在按下「生成模型」前一个可见的确认
+  const hiddenCount = introspectData
+    ? effectiveHiddenKeys(
+        introspectData.tables,
+        introspectData.foreign_keys,
+        selectedTables,
+        hiddenCols
+      ).size
+    : 0;
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -1138,48 +1480,22 @@ function CreateFlowDialog({
                   <span className="mr-2">类型: {introspectData.db_type}</span>
                 )}
                 共 {introspectData.tables.length} 张表，
-                {introspectData.foreign_keys.length} 条外键
+                {introspectData.foreign_keys.length} 条外键；
+                点 ▸ 可展开选择字段（不勾选的字段不会进语义库）。当前选择将写出{" "}
+                {plannedRelationships(introspectData.foreign_keys, selectedTables)} 条表关联。
               </div>
-              <div className="max-h-[200px] overflow-auto rounded border">
-                <table className="w-full text-left text-xs">
-                  <thead className="sticky top-0 bg-muted/60">
-                    <tr>
-                      <th className="px-2 py-1 w-8">
-                        <input
-                          type="checkbox"
-                          checked={
-                            selectedTables.size === introspectData.tables.length
-                          }
-                          onChange={onToggleAll}
-                        />
-                      </th>
-                      <th className="px-2 py-1">表名</th>
-                      <th className="px-2 py-1">列数</th>
-                      <th className="px-2 py-1">注释</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {introspectData.tables.map((t) => (
-                      <tr key={t.name} className="border-t">
-                        <td className="px-2 py-1">
-                          <input
-                            type="checkbox"
-                            checked={selectedTables.has(t.name)}
-                            onChange={() => onToggleTable(t.name)}
-                          />
-                        </td>
-                        <td className="px-2 py-1 font-medium">{t.name}</td>
-                        <td className="px-2 py-1 text-muted-foreground">
-                          {t.column_count}
-                        </td>
-                        <td className="px-2 py-1 truncate max-w-[100px] text-muted-foreground">
-                          {t.comment || "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <TableSelectionList
+                tables={introspectData.tables}
+                foreignKeys={introspectData.foreign_keys}
+                selectedTables={selectedTables}
+                hiddenCols={hiddenCols}
+                expandedTables={expandedTables}
+                onToggleTable={onToggleTable}
+                onToggleAllTables={onToggleAll}
+                onToggleColumn={onToggleColumn}
+                onToggleAllColumns={onToggleAllColumns}
+                onToggleExpand={onToggleExpand}
+              />
               <div className="flex justify-end">
                 <Button
                   size="sm"
@@ -1188,7 +1504,9 @@ function CreateFlowDialog({
                 >
                   {busyOp === "generate"
                     ? "生成中..."
-                    : `生成模型 (${selectedTables.size} 表) →`}
+                    : `生成模型 (${selectedTables.size} 表${
+                        hiddenCount > 0 ? `，隐藏 ${hiddenCount} 列` : ""
+                      }) →`}
                 </Button>
               </div>
             </>
@@ -1230,6 +1548,288 @@ function CreateFlowDialog({
             </Button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── 调整已有库的表/字段对话框 ─────────────────────────────────
+
+/** `introspect` 新增键 `existing_models` 的形状：{表名: {columns, hidden}} */
+type ExistingModels = Record<string, { columns: string[]; hidden: string[] }>;
+
+/**
+ * 从内省响应里取 `existing_models`。
+ * `semanticApi.ts` 是 Esafenet/DLP 密文（改不动），返回类型声明里没有这个键，
+ * 这里做一次收窄 —— 与 `untracked_changes` 同一手法。
+ */
+function readExistingModels(r: unknown): ExistingModels {
+  const v = (r as { existing_models?: ExistingModels } | null)?.existing_models;
+  return v && typeof v === "object" ? v : {};
+}
+
+/** 库里的模型名与库表的写法可能大小写不同，统一按小写找 */
+function existingOf(existing: ExistingModels, table: string) {
+  const hit = Object.keys(existing).find((k) => k.toLowerCase() === table.toLowerCase());
+  return hit ? existing[hit] : undefined;
+}
+
+/** Set 的增/删切换（新建流程与调整流程共用同一语义） */
+function toggleInSet(set: Set<string>, key: string): Set<string> {
+  const next = new Set(set);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+}
+
+function AdjustModelsDialog({
+  projectName,
+  projectLabel,
+  onSaved,
+  onClose,
+}: {
+  projectName: string;
+  projectLabel: string;
+  onSaved: () => void;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [tables, setTables] = useState<IntrospectTable[]>([]);
+  const [foreignKeys, setForeignKeys] = useState<IntrospectForeignKey[]>([]);
+  const [existing, setExisting] = useState<ExistingModels>({});
+  const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
+  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+  const [allowPrune, setAllowPrune] = useState(false);
+  const [rebuildRelationships, setRebuildRelationships] = useState(false);
+  const [autoBuild, setAutoBuild] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      setErr("");
+      try {
+        // db_name 留空 ⇒ 后端按语义库自己的连接配置解析（调整用的就是建库那个库）
+        const r = await introspectTables(projectName, "");
+        if (!alive) return;
+        if (!r.ok) {
+          setErr(r.error || "提取表结构失败");
+          return;
+        }
+        const ex = readExistingModels(r);
+        setTables(r.tables);
+        setForeignKeys(r.foreign_keys || []);
+        setExisting(ex);
+        // 已在库里的表默认勾选；数据库里有、库里没有的表默认不勾（勾上 = 新增一张）
+        setSelectedTables(
+          new Set(r.tables.filter((t) => !!existingOf(ex, t.name)).map((t) => t.name))
+        );
+        // 库里当前隐藏的字段原样回显（结构列交给 isVisible/effectiveHiddenKeys 兜）
+        const hid = new Set<string>();
+        for (const t of r.tables) {
+          for (const c of existingOf(ex, t.name)?.hidden || []) hid.add(colKey(t.name, c));
+        }
+        setHiddenCols(hid);
+      } catch (e) {
+        if (alive) setErr((e as Error).message);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [projectName]);
+
+  const toggleTable = (name: string) => setSelectedTables((p) => toggleInSet(p, name));
+  const toggleExpand = (name: string) => setExpandedTables((p) => toggleInSet(p, name));
+  const toggleColumn = (table: string, col: string) =>
+    setHiddenCols((p) => toggleInSet(p, colKey(table, col)));
+  const toggleAllTables = () => {
+    if (selectedTables.size === tables.length) setSelectedTables(new Set());
+    else setSelectedTables(new Set(tables.map((t) => t.name)));
+  };
+  const toggleAllColumns = (table: string, selectAll: boolean) => {
+    const t = tables.find((x) => x.name === table);
+    if (!t) return;
+    setHiddenCols((prev) => {
+      const next = new Set(prev);
+      for (const c of t.columns || []) {
+        const k = colKey(table, c.name);
+        if (locked.has(k)) continue; // 结构列界面是灰的，状态也必须跟着灰
+        if (selectAll) next.delete(k);
+        else next.add(k);
+      }
+      return next;
+    });
+  };
+
+  const locked = lockedColumns(tables, foreignKeys, selectedTables);
+  const eff = effectiveHiddenKeys(tables, foreignKeys, selectedTables, hiddenCols);
+  const addedCount = Array.from(selectedTables).filter((s) => !existingOf(existing, s)).length;
+  // 未勾选的库里模型 ⇒ 勾上「同时删除」才会被删；库里有、数据库里已没有的表也在这一列里
+  const pruneCandidates = Object.keys(existing).filter(
+    (n) => !Array.from(selectedTables).some((s) => s.toLowerCase() === n.toLowerCase())
+  );
+
+  const doSave = async () => {
+    setErr("");
+    setMsg("");
+    if (selectedTables.size === 0) {
+      setErr("至少选择一张表");
+      return;
+    }
+    setBusy(true);
+    try {
+      const selectedColumns: Record<string, string[]> = {};
+      for (const t of tables) {
+        if (!selectedTables.has(t.name)) continue;
+        const cols = t.columns || [];
+        const visible = cols.filter((c) => !eff.has(colKey(t.name, c.name)));
+        if (visible.length !== cols.length) selectedColumns[t.name] = visible.map((c) => c.name);
+      }
+      const r = await generateModels(projectName, {
+        selected_tables: Array.from(selectedTables),
+        // 默认**不动** relationships.yml：按外键重建会给已有库悄悄加进一批 join，
+        // 那是本次调整之外的改动，要就显式勾。
+        include_relationships: rebuildRelationships,
+        db_name: "",
+        patch_existing: true,
+        prune: allowPrune && pruneCandidates.length > 0,
+        ...(Object.keys(selectedColumns).length > 0
+          ? { selected_columns: selectedColumns }
+          : {}),
+      } as Parameters<typeof generateModels>[1]);
+      if (!r.ok) {
+        setErr(r.error || "保存失败");
+        return;
+      }
+      const gen = r.generated as { models: number; removed?: number; relationships: number };
+      let text = `模型：${gen.models}，删除：${gen.removed ?? 0}，关系：${gen.relationships}`;
+      if (autoBuild) {
+        try {
+          const b = await buildSemanticProject(projectName);
+          text += `\n${b.message}`;
+        } catch (e) {
+          text += `\n构建失败：${(e as Error).message}（可修好后再点卡片上的「🔨 构建」）`;
+        }
+      } else {
+        text += "\n⚠️ 还没构建：点卡片上的「🔨 构建」后新设置才生效";
+      }
+      setMsg(text);
+      onSaved();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">⚙️ 调整「{projectLabel}」的表与字段</h3>
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+          disabled={busy}
+        >
+          ✕
+        </button>
+      </div>
+
+      {err && (
+        <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {err}
+        </div>
+      )}
+      {msg && (
+        <div className="whitespace-pre-wrap rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
+          {msg}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="py-6 text-center text-xs text-muted-foreground">
+          正在读取数据库表结构与语义库当前状态...
+        </div>
+      ) : (
+        <>
+          <div className="text-xs text-muted-foreground">
+            共 {tables.length} 张表、{foreignKeys.length} 条外键；点 ▸ 可展开选择字段。
+            已勾选 {selectedTables.size} 张，隐藏 {eff.size} 列
+            {addedCount > 0 && `，新增 ${addedCount} 张`}。
+          </div>
+          <TableSelectionList
+            tables={tables}
+            foreignKeys={foreignKeys}
+            selectedTables={selectedTables}
+            hiddenCols={hiddenCols}
+            expandedTables={expandedTables}
+            onToggleTable={toggleTable}
+            onToggleAllTables={toggleAllTables}
+            onToggleColumn={toggleColumn}
+            onToggleAllColumns={toggleAllColumns}
+            onToggleExpand={toggleExpand}
+            maxHeightClass="max-h-[45vh]"
+          />
+
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={autoBuild}
+              onChange={() => setAutoBuild((v) => !v)}
+              disabled={busy}
+            />
+            保存后立即构建（不构建则新设置不会生效）
+          </label>
+
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={rebuildRelationships}
+              onChange={() => setRebuildRelationships((v) => !v)}
+              disabled={busy}
+            />
+            同时按数据库外键重建 relationships.yml（默认保持原样）
+          </label>
+
+          <label
+            className={cn("flex items-start gap-2 text-xs", pruneCandidates.length === 0 && "opacity-50")}
+          >
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={allowPrune}
+              onChange={() => setAllowPrune((v) => !v)}
+              disabled={busy || pruneCandidates.length === 0}
+            />
+            <span>
+              同时删除未勾选的表（{pruneCandidates.length} 张
+              {pruneCandidates.length > 0 && `：${pruneCandidates.slice(0, 10).join("、")}`}
+              {pruneCandidates.length > 10 && " 等"}）
+              <br />
+              <span className="text-muted-foreground">
+                不可逆。视图/Cube 若引用了被删的表，构建会失败；relationships.yml
+                未重建时也要先确认它没有引用它们。
+              </span>
+            </span>
+          </label>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
+              关闭
+            </Button>
+            <Button size="sm" onClick={doSave} disabled={busy || selectedTables.size === 0}>
+              {busy ? "保存中..." : autoBuild ? "保存并构建" : "保存"}
+            </Button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -1557,9 +2157,17 @@ function PullGitDialog({
   }, [name, isGit]);
 
   const isTag = !!refs && refs.tags.some((t) => t.name === ref_);
-  // 只有「会拦住更新的已跟踪文件改动」才算挡路（未跟踪文件不拦，别误报）
+  // 挡路的是「已修改的已跟踪文件」+「新增未跟踪文件」，两者后端都拦（同判据）。
+  // 未跟踪文件过去不算挡路，但 `git checkout -f` **从不删除**未跟踪文件 ⇒ 放它们过去
+  // 等于「更新完语义库里还留着没推 git 的旧知识」（2026-10-01 生产）。
+  // `untracked_changes` 是后端新加的键，类型定义在 DLP 加密的 lib/semanticApi.ts 里
+  // 改不动，这里做一次收窄取值。
   const localChanges = status?.local_changes || [];
-  const blockedByLocal = localChanges.length > 0;
+  const untrackedChanges =
+    (status as (GitStatusInfo & { untracked_changes?: string[] }) | null)
+      ?.untracked_changes || [];
+  const blockingChanges = [...localChanges, ...untrackedChanges];
+  const blockedByLocal = blockingChanges.length > 0;
   // 未绑 git 时：本地自建内容（target/ 构建产物也算）会被仓库版本整个替换，
   // 所以状态预检说「不是空骨架」就要确认；预检失败或后端已拒绝过一次也一律要确认。
   const adoptLocalFiles = status?.adopt_local_files || [];
@@ -1611,17 +2219,19 @@ function PullGitDialog({
       {blockedByLocal && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-[11px] leading-relaxed text-destructive">
           <div className="font-medium">
-            ⚠ 本地有 {localChanges.length} 个文件未提交，直接更新会被拒绝（不会覆盖你的改动）
+            ⚠ 本地有 {blockingChanges.length} 个文件未提交（
+            {localChanges.length} 个已修改、{untrackedChanges.length} 个新增未跟踪），
+            直接更新会被拒绝（不会覆盖你的改动）
           </div>
           <ul className="mt-1 list-disc pl-4 font-mono break-all">
-            {localChanges.slice(0, 5).map((f) => (
+            {blockingChanges.slice(0, 5).map((f) => (
               <li key={f}>{f}</li>
             ))}
           </ul>
-          {localChanges.length > 5 && <div>…共 {localChanges.length} 个</div>}
+          {blockingChanges.length > 5 && <div>…共 {blockingChanges.length} 个</div>}
           <div className="mt-1 text-destructive/80">
             建议先「推送 Git」把改动提交到远程；不想保留则勾选下方选项，后端会先
-            <code className="mx-0.5">git stash</code>备份再更新。
+            <code className="mx-0.5">git stash</code>备份再更新（新增未跟踪文件一并入备份）。
           </div>
         </div>
       )}
@@ -1723,7 +2333,7 @@ function PullGitDialog({
               ? "Tag：detached 检出该版本（不跟随分支后续提交）。"
               : "分支：本地同名分支重置到远程最新；本地未推送提交 / 未提交改动会被拒绝，不会静默覆盖。"}
             {status && status.has_local_changes && !blockedByLocal
-              ? "（本地只有未跟踪文件 / 构建产物改动，不影响更新）"
+              ? "（本地只有构建产物（target/）改动，不影响更新）"
               : ""}
           </p>
         ) : (
@@ -1854,7 +2464,7 @@ function PushGitDialog({
     ta.style.top = "0";
     ta.style.left = "-9999px";
     document.body.appendChild(ta);
-    let ok = false;
+    let ok: boolean;
     try {
       ta.focus();
       ta.select();
