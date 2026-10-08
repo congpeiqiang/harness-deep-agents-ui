@@ -605,7 +605,6 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
             <ProjectCard
               key={p.path}
               project={p}
-              busy={busy}
               busyOp={busyOp}
               isEditing={editingProject === p.name}
               onEdit={() =>
@@ -807,7 +806,6 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
 
 function ProjectCard({
   project: p,
-  busy,
   busyOp,
   isEditing,
   onEdit,
@@ -821,7 +819,6 @@ function ProjectCard({
   onSaved,
 }: {
   project: SemanticProject;
-  busy: boolean;
   busyOp: string;
   isEditing: boolean;
   onEdit: () => void;
@@ -913,13 +910,15 @@ function ProjectCard({
           >
             📝 编辑知识
           </Button>
-          {/* 已有库也能改「基于哪些表/字段」：默认原地打标（不重写文件、不丢手改描述） */}
+          {/* 已有库也能改「基于哪些表/字段」：默认原地打标（不重写文件、不丢手改描述）。
+              禁用口径与同排按钮完全一致：**只看本卡自己的写操作**（构建/更新/接入/删除），
+              用来避免和写 target/mdl.json 撞车；校验只读、别的卡在忙，都不挡它。 */}
           <Button
             variant="outline"
             size="sm"
             className="h-7 text-xs"
             onClick={() => setAdjusting(true)}
-            disabled={busy}
+            disabled={myBuildBusy || myPullBusy || myAdoptBusy || myDeleteBusy}
           >
             ⚙️ 调整模型
           </Button>
