@@ -988,10 +988,17 @@ function ProjectCard({
         </div>
       )}
 
-      {/* 调整表/字段（弹层；保存后 onSaved 刷新列表） */}
+      {/* 调整表/字段（弹层；保存后 onSaved 刷新列表）
+          ⚠️ 这个外层**必须可滚**（`overflow-y-auto` + `items-start` + 内层 `my-auto`）：
+          2026-10-08 生产反馈「保存后弹窗里的保存按钮不见了，关掉重开才回来」——根因不止
+          「loading 把整块换成占位文案」那一条：保存成功后 `setMsg` 塞进来的绿框（模型/删除/
+          关系 + warnings + 构建输出，`whitespace-pre-wrap` 无上限）会把弹窗顶高，超过视口时
+          `items-center` 把**页脚（保存/关闭）顶出可视区**；外层原来既不可滚也没有 max-h ⇒
+          按钮**滚都滚不到**。关掉重开时 msg 随卸载清空 ⇒ 弹窗变矮 ⇒ 按钮「又出现了」。
+          现在：短内容仍然居中（`my-auto` 优先于 `items-start`），高内容从顶部起排、可滚动到底。 */}
       {adjusting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-2xl rounded-lg border bg-background p-4 shadow-lg">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4">
+          <div className="my-auto w-full max-w-2xl rounded-lg border bg-background p-4 shadow-lg">
             <AdjustModelsDialog
               projectName={p.name}
               projectLabel={p.project_name}
@@ -1597,6 +1604,10 @@ function AdjustModelsDialog({
   const [foreignKeys, setForeignKeys] = useState<IntrospectForeignKey[]>([]);
   const [existing, setExisting] = useState<ExistingModels>({});
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
+  // 进对话框时**替用户勾上**的表（库里已有的模型）。「取消勾选即删」必须拿这个集合做差集，
+  // 不能拿 existing 的键去比：existing 的键是模型**声明名**，声明名与数据库表名不一致的模型
+  // 从来就没被勾上（existingOf 查不到），会被误判成「用户取消了」⇒ 一次保存就把它删了。
+  const [initiallyChecked, setInitiallyChecked] = useState<Set<string>>(new Set());
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
   const [allowPrune, setAllowPrune] = useState(false);
@@ -1605,11 +1616,22 @@ function AdjustModelsDialog({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  // 保存成功后 +1 ⇒ 重跑下面那个 introspect 的 effect，把「库里当前状态」重新读一遍。
+  // 没有它时 `existing` 永远停在**打开对话框那一刻**的快照：刚新增的模型不在里面，
+  // 「取消勾选」于是无从判成候选（旧版那个全局框会因此变灰、勾不上 ⇒ 静默不删）。
+  const [reloadKey, setReloadKey] = useState(0);
+  // 只有**首屏**才整屏换成「正在读取…」；保存后的那次重读不能再整屏替换 —— 否则按钮
+  // 会随整块内容一起消失（2026-10-08 生产反馈：「保存后保存按钮不见了，要关框重开才回来」，
+  // 就是这里把 loading 置真、把整个 body 换成了占位文案）。重读期间只加一行「正在同步…」，
+  // 旧内容照常可见可点；真断了线也能看出来（而不是看起来像「按钮丢了」）。
+  const loadedOnceRef = useRef(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      setLoading(true);
+      if (loadedOnceRef.current) setSyncing(true);
+      else setLoading(true);
       setErr("");
       try {
         // db_name 留空 ⇒ 后端按语义库自己的连接配置解析（调整用的就是建库那个库）
@@ -1624,9 +1646,9 @@ function AdjustModelsDialog({
         setForeignKeys(r.foreign_keys || []);
         setExisting(ex);
         // 已在库里的表默认勾选；数据库里有、库里没有的表默认不勾（勾上 = 新增一张）
-        setSelectedTables(
-          new Set(r.tables.filter((t) => !!existingOf(ex, t.name)).map((t) => t.name))
-        );
+        const init = new Set(r.tables.filter((t) => !!existingOf(ex, t.name)).map((t) => t.name));
+        setSelectedTables(init);
+        setInitiallyChecked(init);
         // 库里当前隐藏的字段原样回显（结构列交给 isVisible/effectiveHiddenKeys 兜）
         const hid = new Set<string>();
         for (const t of r.tables) {
@@ -1636,13 +1658,17 @@ function AdjustModelsDialog({
       } catch (e) {
         if (alive) setErr((e as Error).message);
       } finally {
-        if (alive) setLoading(false);
+        loadedOnceRef.current = true; // 不管成败，首屏只做一次；失败后重读也不再整屏替换
+        if (alive) {
+          setLoading(false);
+          setSyncing(false);
+        }
       }
     })();
     return () => {
       alive = false;
     };
-  }, [projectName]);
+  }, [projectName, reloadKey]);
 
   const toggleTable = (name: string) => setSelectedTables((p) => toggleInSet(p, name));
   const toggleExpand = (name: string) => setExpandedTables((p) => toggleInSet(p, name));
@@ -1670,10 +1696,19 @@ function AdjustModelsDialog({
   const locked = lockedColumns(tables, foreignKeys, selectedTables);
   const eff = effectiveHiddenKeys(tables, foreignKeys, selectedTables, hiddenCols);
   const addedCount = Array.from(selectedTables).filter((s) => !existingOf(existing, s)).length;
-  // 未勾选的库里模型 ⇒ 勾上「同时删除」才会被删；库里有、数据库里已没有的表也在这一列里
-  const pruneCandidates = Object.keys(existing).filter(
-    (n) => !Array.from(selectedTables).some((s) => s.toLowerCase() === n.toLowerCase())
+  // 库里已有、但数据库里**已经没有**这张表了 ⇒ 列表里根本没有它，也就没有勾选态可取消
+  // ⇒ 只能靠下面那个全局框删（这是它唯一还该管的事）。
+  const orphanModels = Object.keys(existing).filter(
+    (n) => !tables.some((t) => t.name.toLowerCase() === n.toLowerCase())
   );
+  // 「进框时替你勾上、现在没勾」= 用户**明确取消勾选** ⇒ 保存即删掉这个模型。
+  // 2026-10-08 修：这条以前依赖下面那个全局框，而全局框在「新增模型后不重取 introspect」
+  // 的旧快照下根本是灰的（候选为空 ⇒ disabled）⇒ 取消勾选后保存**静默不删**；而全局框一旦
+  // 被打开，又会把孤儿模型连坐删掉。现在改成逐表点名发给后端 delete_tables。
+  const uncheckedTables = Array.from(initiallyChecked).filter(
+    (t) => !Array.from(selectedTables).some((s) => s.toLowerCase() === t.toLowerCase())
+  );
+  const pruneCandidates = orphanModels;
 
   const doSave = async () => {
     setErr("");
@@ -1698,7 +1733,9 @@ function AdjustModelsDialog({
         include_relationships: rebuildRelationships,
         db_name: "",
         patch_existing: true,
+        // 全局框只负责「数据库里已不存在的表」；「取消勾选」走逐表点名的 delete_tables
         prune: allowPrune && pruneCandidates.length > 0,
+        ...(uncheckedTables.length > 0 ? { delete_tables: uncheckedTables } : {}),
         ...(Object.keys(selectedColumns).length > 0
           ? { selected_columns: selectedColumns }
           : {}),
@@ -1709,6 +1746,11 @@ function AdjustModelsDialog({
       }
       const gen = r.generated as { models: number; removed?: number; relationships: number };
       let text = `模型：${gen.models}，删除：${gen.removed ?? 0}，关系：${gen.relationships}`;
+      // 后端「跳过」的列（数据库里有、模型文件里没有 —— DDL 后加了列而库没重建）：如实显示。
+      // 本对话框是拿**数据库**列渲染的，那些列在界面上看起来就是个正常的、能勾成「可见」的
+      // 列；不点名的话用户会以为它们在模型里，问数时才发现查不到。
+      const warns = (r as unknown as { warnings?: string[] }).warnings;
+      if (warns?.length) text += `\n${warns.join("\n")}`;
       if (autoBuild) {
         try {
           const b = await buildSemanticProject(projectName);
@@ -1720,7 +1762,12 @@ function AdjustModelsDialog({
         text += "\n⚠️ 还没构建：点卡片上的「🔨 构建」后新设置才生效";
       }
       setMsg(text);
+      // 先本地把「进框时替你勾上」改成**这次保存后确实有模型的表**（= 本次选中的表），不等
+      // 下面那次重读回来：万一重读慢或失败，「取消勾选即删」的判定不会退回旧快照（那正是
+      // 2026-10-08 那个静默不删的老毛病）。重读落地后会再覆盖一次，两者一致。
+      setInitiallyChecked(new Set(selectedTables));
       onSaved();
+      setReloadKey((k) => k + 1); // 重读库里状态：existing/勾选态/隐藏列都换成保存后的真相
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -1743,12 +1790,16 @@ function AdjustModelsDialog({
       </div>
 
       {err && (
-        <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        <div className="max-h-32 overflow-y-auto rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {err}
         </div>
       )}
+      {/* 限高 + 自己滚：这条消息（模型/删除/关系 + warnings + 构建输出）是无上限的
+          `whitespace-pre-wrap`，保存成功后一次出现好几行 —— 它长一分，下面的表列表、勾选框、
+          页脚就往下挤一分，超过视口时「保存」按钮就被挤出可视区（2026-10-08 生产反馈）。
+          限高后按钮永远留在视口内。 */}
       {msg && (
-        <div className="whitespace-pre-wrap rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
+        <div className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
           {msg}
         </div>
       )}
@@ -1763,6 +1814,7 @@ function AdjustModelsDialog({
             共 {tables.length} 张表、{foreignKeys.length} 条外键；点 ▸ 可展开选择字段。
             已勾选 {selectedTables.size} 张，隐藏 {eff.size} 列
             {addedCount > 0 && `，新增 ${addedCount} 张`}。
+            {syncing && <span className="ml-1">（正在同步库内状态…）</span>}
           </div>
           <TableSelectionList
             tables={tables}
@@ -1809,18 +1861,23 @@ function AdjustModelsDialog({
               disabled={busy || pruneCandidates.length === 0}
             />
             <span>
-              同时删除未勾选的表（{pruneCandidates.length} 张
+              同时删除「数据库里已不存在的表」（{pruneCandidates.length} 张
               {pruneCandidates.length > 0 && `：${pruneCandidates.slice(0, 10).join("、")}`}
               {pruneCandidates.length > 10 && " 等"}）
               <br />
               <span className="text-muted-foreground">
-                不可逆。视图/Cube 若引用了被删的表，构建会失败；relationships.yml
-                未重建时也要先确认它没有引用它们。
+                这些表在数据库里已经没有了，列表里无从勾选，只能在这里清掉；不可逆。
+                （取消勾选的模型**保存即删**，不走这里）
               </span>
             </span>
           </label>
 
-          <div className="flex justify-end gap-2">
+          <div className="flex items-center justify-end gap-2">
+            {uncheckedTables.length > 0 && (
+              <span className="mr-auto text-xs text-destructive">
+                保存将删除：{uncheckedTables.join("、")}
+              </span>
+            )}
             <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
               关闭
             </Button>
