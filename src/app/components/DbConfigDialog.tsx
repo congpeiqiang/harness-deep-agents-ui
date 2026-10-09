@@ -459,17 +459,17 @@ export function DbConfigPanel({ active = true, onChanged }: DbConfigPanelProps) 
               />
             </div>
             <div className="grid gap-1.5">
-              <Label>Wren 项目（语义层）</Label>
+              <Label>关联语义库</Label>
               <Select
                 value={form.wren_project || NONE_SENTINEL}
                 onValueChange={(v) => set("wren_project", v === NONE_SENTINEL ? "" : v)}
               >
                 <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="未配置（走直连）" />
+                  <SelectValue placeholder="未配置（直连）" />
                 </SelectTrigger>
                 <SelectContent>
                   {/* Radix Select 禁止 SelectItem 空字符串 value，用哨兵占位表示「未配置」 */}
-                  <SelectItem value={NONE_SENTINEL}>未配置（走直连）</SelectItem>
+                  <SelectItem value={NONE_SENTINEL}>未配置（直连）</SelectItem>
                   {wrenProjects.map((p) => (
                     <SelectItem key={p.path} value={p.path} title={p.path}>
                       {p.name}
@@ -478,7 +478,7 @@ export function DbConfigPanel({ active = true, onChanged }: DbConfigPanelProps) 
                 </SelectContent>
               </Select>
               <p className="text-[11px] leading-tight text-muted-foreground">
-                配置后该库走 Wren 语义层查询（工具名 wrenai_&lt;库名&gt;_*），需重启后端生效。
+                配置后该库走语义库查询（工具名 wrenai_&lt;库名&gt;_*），需重启后端生效。
               </p>
             </div>
 
