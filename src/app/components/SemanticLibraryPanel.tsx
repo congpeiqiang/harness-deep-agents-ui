@@ -630,18 +630,23 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
         )}
       </div>
 
-      {/* 添加对话框 */}
+      {/* 添加对话框
+          ⚠️ 外层**必须可滚** —— 与「调整模型」弹层同因（2026-10-08 生产事故）：错误/提示框是
+          `whitespace-pre-wrap` 的**无上限**内容（新建失败时后端会把整段报错/清单贴回来），
+          弹窗被顶高后 `items-center` 会把**页脚按钮整行顶出可视区**；外层原来既不可滚
+          也没有 max-h ⇒ 按钮滚都滚不到。短内容仍居中（`my-auto` 优先于 `items-start`），
+          高内容从顶部起排、可滚到底。 */}
       {addMode && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-lg rounded-lg border bg-background p-4 shadow-lg">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4">
+          <div className="my-auto w-full max-w-lg rounded-lg border bg-background p-4 shadow-lg">
             {/* 对话框内显示错误/提示 */}
             {error && (
-              <div className="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              <div className="mb-3 max-h-32 overflow-y-auto rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
                 {error}
               </div>
             )}
             {notice && (
-              <div className="mb-3 whitespace-pre-wrap rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
+              <div className="mb-3 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
                 {notice}
               </div>
             )}
