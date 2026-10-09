@@ -126,7 +126,9 @@
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
     --border: 220 13% 91%;
-    --input: 220 13% 91%;
+    /* 表单控件边框：原 220 13% 91%（≈#E5E7EB）与 --background 98% 只差 7% 明度，
+       输入框/下拉框在浅底上「看不出是个框」⇒ 压到 gray-300。--border 不动（卡片轮廓保持轻）。 */
+    --input: 220 13% 85%;
     --ring: 180 50% 32%;
     --sidebar: 220 13% 95%;
     --chart-1: 12 76% 61%;
@@ -177,7 +179,8 @@
       --destructive: 0 63% 71%;
       --destructive-foreground: 0 0% 13%;
       --border: 0 0% 28%;
-      --input: 0 0% 28%;
+      /* 同上：差 10% 明度在暗色下也偏弱，抬到能一眼看出框 */
+      --input: 0 0% 34%;
       --ring: 174 72% 56%;
       --sidebar: 0 0% 18%;
       --chart-1: 220 70% 50%;
@@ -311,7 +314,14 @@ button {
   font-family: inherit;
   font-size: inherit;
   line-height: inherit;
-  border: none;
+  /* ⚠ 这里**不要**写 `border: none`（2026-10-09 实测定案）：
+     `border` 是简写，会把 border-style 一并抹成 `none`；而 Tailwind 只给
+     `.border` 补 border-width、`.`border-input`` 补 border-color，
+     **没有任何工具类补 border-style** ⇒ 所有带 `border` 的 <button>
+     （shadcn 的 SelectTrigger、variant="outline" 的 Button…）都变成
+     「1px 宽 + style:none」= 一根线都不画。
+     症状：文本框（<input>）有框、下拉框（<button>）没框。
+     默认无边框不需要这行 —— preflight 已给 `*` 设 `border: 0 solid`（宽度 0）。 */
   background: none;
   cursor: pointer;
 
