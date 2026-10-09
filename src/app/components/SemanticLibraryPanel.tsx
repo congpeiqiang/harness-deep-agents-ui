@@ -1951,7 +1951,7 @@ function GitImportDialog({
       </div>
       <div className="grid gap-2">
         <div className="grid gap-1">
-          <Label className="text-xs">仓库地址（http/https）*</Label>
+          <Label className="text-xs">仓库地址（http/https/ssh）*</Label>
           <Input
             className="h-8 text-xs"
             value={url}
@@ -2093,13 +2093,20 @@ function LocalAssociateDialog({
       </div>
       <div className="grid gap-2">
         <div className="grid gap-1">
-          <Label className="text-xs">项目目录绝对路径 *</Label>
+          <Label className="text-xs">项目目录绝对路径（后端机器上）*</Label>
           <Input
             className="h-8 text-xs"
             value={path}
             onChange={(e) => onSetPath(e.target.value)}
-            placeholder="D:/workspace/my_semantic"
+            placeholder="/app/data/workspace/my_semantic"
           />
+          {/* ⚠ 这里原先的 placeholder 是 `D:/workspace/my_semantic` —— 一个 Windows 客户端盘符路径，
+              把用户直接引到沟里（2026-10-09：用户照着填 `D:\code_work_space\...`，后端报「目录不存在」）。
+              后端只认它自己文件系统上的路径，且必须落在 workspace 根目录之下。 */}
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            填后端服务器上的绝对路径（不是你这台电脑的盘符路径），且必须是后端
+            workspace 根目录下的子目录，里面有 wren_project.yml。本地项目请走「📥 从 Git 导入」。
+          </p>
         </div>
         <div className="grid gap-1">
           <Label className="text-xs">关联数据库 *</Label>
@@ -2477,12 +2484,9 @@ function PushGitDialog({
   onPush: () => void;
   onClose: () => void;
 }) {
-  // SSH 公钥（后端推送用身份，账号级）——打开弹窗即拉取，便于复制到 GitLab
+  // SSH 公钥（后端推送用身份，账号级）——打开弹窗即拉取，便于存到 GitLab
   const [pubkey, setPubkey] = useState<string | null>(null);
   const [pubkeyErr, setPubkeyErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
-  const pubkeyInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -2500,60 +2504,25 @@ function PushGitDialog({
     };
   }, []);
 
-  // 复制文本：仅安全上下文（https/localhost）可用 Clipboard API；
-  // 生产是 http 局域网 IP → navigator.clipboard 不存在，必须用隐藏 textarea + execCommand 兜底。
-  // 返回是否真正写入成功——execCommand 在复制未选中/被浏览器拒时会静默失败，不能无条件报成功。
-  const copyTextToClipboard = async (text: string): Promise<boolean> => {
-    try {
-      if (
-        typeof window !== "undefined" &&
-        window.isSecureContext &&
-        navigator.clipboard?.writeText
-      ) {
-        await navigator.clipboard.writeText(text);
-        return true;
-      }
-    } catch {
-      /* Clipboard API 失败 → 走 execCommand 兜底 */
-    }
-    // 兜底 textarea 必须真正移出视口（-9999px）并 focus+setSelectionRange，
-    // 否则部分浏览器 select() 不生效 → execCommand 复制的是旧的/空的选区
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "-9999px";
-    document.body.appendChild(ta);
-    let ok: boolean;
-    try {
-      ta.focus();
-      ta.select();
-      ta.setSelectionRange(0, text.length);
-      ok = document.execCommand("copy");
-    } catch {
-      ok = false;
-    }
-    document.body.removeChild(ta);
-    return ok;
-  };
-
-  const copyPubkey = async () => {
+  // ⚠ 这里**刻意不做「复制到剪贴板」**：生产是 http 局域网 IP，navigator.clipboard 不存在，
+  // 只剩 execCommand 兜底；而 execCommand 只表示「命令被处理」，**不保证剪贴板被写入**
+  // （实测过：按钮报「✓ 已复制」而粘贴为空）。与其给一个会撒谎的按钮，不如只留两条真的路：
+  // ① 点公钥框自动全选 + Ctrl+C（浏览器自己的复制，用户手势，不受此坑影响）；
+  // ② 下载 id_ed25519.pub 文件。
+  // 下载公钥文件：完全不经过剪贴板。
+  const downloadPubkey = () => {
     if (!pubkey) return;
-    const ok = await copyTextToClipboard(pubkey);
-    if (ok) {
-      setCopyFailed(false);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } else {
-      // 自动复制被拒 → 主动全选公钥本体，引导用户 Ctrl+C 手动复制
-      setCopied(false);
-      setCopyFailed(true);
-      window.setTimeout(() => {
-        pubkeyInputRef.current?.focus();
-        pubkeyInputRef.current?.select();
-      }, 0);
-    }
+    const blob = new Blob([pubkey.endsWith("\n") ? pubkey : `${pubkey}\n`], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "id_ed25519.pub";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -2576,23 +2545,25 @@ function PushGitDialog({
           </span>
           {pubkey && (
             <Button
+              type="button"
               variant="outline"
               size="sm"
               className="h-6 px-2 text-[11px]"
-              onClick={copyPubkey}
+              onClick={downloadPubkey}
+              title="下载 id_ed25519.pub"
             >
-              {copied ? "✓ 已复制" : "复制公钥"}
+              下载公钥
             </Button>
           )}
         </div>
         {pubkey ? (
-          <input
-            ref={pubkeyInputRef}
+          <textarea
             readOnly
+            rows={3}
             value={pubkey}
             onFocus={(e) => e.currentTarget.select()}
             onClick={(e) => e.currentTarget.select()}
-            className="w-full truncate rounded bg-background px-1.5 py-1 font-mono text-[11px] focus:outline-none"
+            className="w-full resize-none break-all rounded bg-background px-1.5 py-1 font-mono text-[11px] leading-snug focus:outline-none"
             title="点击自动全选，可手动复制"
             aria-label="后端推送 SSH 公钥"
           />
@@ -2601,13 +2572,9 @@ function PushGitDialog({
         ) : (
           <div className="text-[11px] text-muted-foreground">加载公钥中…</div>
         )}
-        {copyFailed && (
-          <div className="mt-1 text-[10px] text-destructive">
-            浏览器自动复制被拒绝：公钥已自动全选，请按 Ctrl+C 手动复制
-          </div>
-        )}
         <div className="mt-1 text-[10px] leading-snug text-muted-foreground">
-          首次推送前请把公钥添加到 GitLab「偏好设置 → SSH Keys」（账号级，添加一次即可推送所有仓库）
+          点「下载公钥」保存 id_ed25519.pub，或点击上方公钥框（自动全选）后按 Ctrl+C，
+          再添加到 GitLab「偏好设置 → SSH Keys」（账号级，添加一次即可推送所有仓库）。
         </div>
       </div>
       <div className="grid gap-2">
