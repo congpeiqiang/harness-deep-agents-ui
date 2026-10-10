@@ -170,13 +170,13 @@ function HomePageInner({
                 <Link href="/experiment">
                   <Button variant="outline" size="sm">
                     <FlaskConical className="mr-2 h-4 w-4" />
-                    离线测试
+                    AB测试
                   </Button>
                 </Link>
                 <Link href="/feedback/annotate">
                   <Button variant="outline" size="sm">
                     <MessageSquareWarning className="mr-2 h-4 w-4" />
-                    待标注
+                    标注队列
                   </Button>
                 </Link>
               </>

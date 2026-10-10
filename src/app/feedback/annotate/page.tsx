@@ -53,6 +53,7 @@ import {
   fetchDatasetItems,
   fetchDatasetStats,
   revokeGoodAnnotation,
+  removeBadcaseItem,
   deleteAnnotation,
   clearAnnotations,
   ANNOTATION_DELETABLE,
@@ -211,7 +212,8 @@ function DatasetDetail({
   isBad: boolean;
   onRevoke?: () => void;
   revoking?: boolean;
-  /** 能否撤回：需要该条在本地能找到对应的标注行（见页面里的 midFor）。 */
+  /** 能否移出数据集。GoodCase 需要该条在本地能找到对应的标注行（见页面里的 midFor）；
+   *  BadCase 认 `item_id` + `trace_id`（自动采集条没有 message_id，也没有本地行）。 */
   revocable?: boolean;
 }) {
   return (
@@ -299,10 +301,15 @@ function DatasetDetail({
         {it.trace_id && <span className="font-mono">trace {shortId(it.trace_id)}</span>}
         {it.collected_at && <span>采集日 {it.collected_at}</span>}
       </div>
-      {/* 撤回入集：只对 GoodCase，且**真删** Langfuse 数据集条目（不是打标记——
-          数据集是评测基准，留一条错标就是毒化）。自动入集的门槛是宽松的（只看点赞
-          + 有 SQL + 非闲聊），所以这条退路必须存在且好找。 */}
-      {!isBad && onRevoke && (
+      {/* 移出数据集：两类条目都是**真删** Langfuse 数据集条目（不是打标记——数据集是
+          评测基准，留一条错标就是毒化）。自动入集/自动采集的门槛是宽松的（只看点赞
+          + 有 SQL + 非闲聊），所以这条退路必须存在且好找。
+
+          • GoodCase → 「撤回（移出 Good Set）」：删 Dataset:goodcase 条目，本地回 queued。
+            定位靠本地标注行（老条目没记 message_id 就定位不到）。
+          • BadCase → 「移出 BadCase」：删 Dataset:badcase 条目 + 该 trace 状态置 invalid
+            （不再进回归集）。自动采集条没有本地标注行，是正常的，不阻止移出。 */}
+      {onRevoke && (
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
           <Button
             variant="outline"
@@ -311,17 +318,31 @@ function DatasetDetail({
             disabled={!revocable || revoking}
             title={
               revocable
-                ? "删除 Langfuse 里这条 Dataset item，本地条目回到「待判断」"
-                : "该条目入集时没记消息 id，且本会话下找不到唯一对应的本地标注，无法安全定位——请到 Langfuse 数据集 UI 手动删除"
+                ? isBad
+                  ? "删除 Langfuse 里这条 Dataset:badcase 条目，并把该 trace 的状态置为 invalid（不再进回归集）"
+                  : "删除 Langfuse 里这条 Dataset:goodcase 条目，本地条目回到「待判断」"
+                : isBad
+                  ? "该条目缺 item_id / trace_id，无法安全定位——请到 Langfuse 数据集 UI 手动删除"
+                  : "该条目入集时没记消息 id，且本会话下找不到唯一对应的本地标注，无法安全定位——请到 Langfuse 数据集 UI 手动删除"
             }
           >
             <Trash2 className="mr-1.5 size-3.5" />
-            {revoking ? "撤回中…" : "撤回（移出 Good Set）"}
+            {isBad
+              ? revoking
+                ? "移出中…"
+                : "移出 BadCase"
+              : revoking
+                ? "撤回中…"
+                : "撤回（移出 Good Set）"}
           </Button>
           <span className="text-[11px] text-muted-foreground">
-            {revocable
-              ? "真删数据集条目，本地回到「待判断」"
-              : "定位不到对应标注（老条目），请在 Langfuse UI 手动删除"}
+            {isBad
+              ? revocable
+                ? "真删数据集条目 + 状态置 invalid（不再进回归集）；有本地标注行会回到「待判断」，自动采集条没有本地行"
+                : "定位不到对应条目（缺 item_id / trace_id），请在 Langfuse UI 手动删除"
+              : revocable
+                ? "真删数据集条目，本地回到「待判断」"
+                : "定位不到对应标注（老条目），请在 Langfuse UI 手动删除"}
           </span>
         </div>
       )}
@@ -873,6 +894,47 @@ export default function AnnotatePage() {
     }
   };
 
+  /** 移出 BadCase。二次确认不可省：这是**真删**数据集条目 + 把 trace 状态置 invalid。
+   *
+   *  定位键是 dataset `item_id`，不是 message_id —— 自动采集条根本没记 message_id，
+   *  且一条 trace 下可能同时挂着自动采集与人工确认两条（那样用「唯一条」回退会歧义）。
+   *  本地标注行「若有则回退」：自动采集条没有本地行是正常的，后端不会因此报错。 */
+  const onRemoveBad = async (it: DatasetItem) => {
+    if (!it.item_id || !it.trace_id) return;
+    const extra = it.message_id
+      ? ""
+      : "\n（自动采集条目：本地没有标注行，移出后不会回到「待判断」）";
+    const multi =
+      "\n若该 trace 下还有别的 BadCase 条目，状态标记会等到最后一条移出才置 invalid。";
+    if (
+      !window.confirm(
+        `移出后 Langfuse 里这条 BadCase 会被真删，该 trace 的状态置为 invalid（不再进回归集）。${extra}${multi}\n确定移出？`
+      )
+    ) {
+      return;
+    }
+    setRevoking(true);
+    try {
+      const resp = await removeBadcaseItem(it.item_id, {
+        traceId: it.trace_id,
+        threadId: it.session_id,
+        messageId: it.message_id,
+      });
+      if (resp.warning) {
+        toast.warning(`已移出 BadCase（${resp.warning}）`);
+      } else {
+        toast.success(`已移出 BadCase（删除 ${resp.deleted_items} 条数据集条目）`);
+      }
+      await refreshDataset(statusTab);
+      refreshStats();
+    } catch (e) {
+      // 后端把「定位不了」（409）与「删失败」（502）都带了明确原因，原样透出去。
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRevoking(false);
+    }
+  };
+
   const status = detail?.status ?? "queued";
   // 正例（点赞）的主操作是「直接入 Good Set」，「进入标注」对正例是次要/例外路径
   const isPositive = detail?.rating === "positive";
@@ -1158,9 +1220,17 @@ export default function AnnotatePage() {
                     <DatasetDetail
                       it={it}
                       isBad={statusTab === "badcase"}
-                      revocable={Boolean(midFor(it))}
+                      revocable={
+                        statusTab === "badcase"
+                          ? Boolean(it.item_id && it.trace_id)
+                          : Boolean(midFor(it))
+                      }
                       revoking={revoking}
-                      onRevoke={() => onRevokeGood(it)}
+                      onRevoke={() =>
+                        statusTab === "badcase"
+                          ? onRemoveBad(it)
+                          : onRevokeGood(it)
+                      }
                     />
                   );
                 })()}
@@ -1216,11 +1286,15 @@ export default function AnnotatePage() {
                   </p>
                 )}
                 <div className="mt-3 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
-                  <span className="font-mono">
-                    会话 {shortId(detail.thread_id)}
+                  {/* 完整 id，不缩写：这两个是要拿去 Langfuse / 日志里搜的原值，
+                      缩写（`01a0bc…2bd8c1`）看着像能认，实际没法复制使用。
+                      `break-all` 是必须的：UUID / lc_run id 都是无空格长串，
+                      不打断就整行溢出容器；`flex-wrap` 只保证两个 span 之间换行。 */}
+                  <span className="font-mono break-all">
+                    会话 {detail.thread_id}
                   </span>
-                  <span className="font-mono">
-                    消息 {shortId(detail.message_id)}
+                  <span className="font-mono break-all">
+                    消息 {detail.message_id}
                   </span>
                   {detail.annotator && <span>标注人：{detail.annotator}</span>}
                 </div>

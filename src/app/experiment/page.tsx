@@ -132,7 +132,7 @@ export default function ExperimentPage() {
           <span className="text-muted-foreground">/</span>
           <h1 className="flex shrink-0 items-center gap-2 text-lg font-semibold">
             <FlaskConical className="size-5" />
-            离线测试
+            AB测试
           </h1>
           <p className="hidden truncate text-xs text-muted-foreground md:block">
             数据集 × prompt 版本 × skill 版本 × 语义库版本 A/B 对比

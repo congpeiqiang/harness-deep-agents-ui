@@ -208,6 +208,47 @@ export async function revokeGoodAnnotation(
   return data;
 }
 
+/** 移出 BadCase：真删 Langfuse `Dataset:badcase` 里的那条 + 把该 trace 置 `invalid`
+ *  （不再进回归集）+ 若有本地标注行则回到「待判断」。
+ *
+ *  定位用 `item_id` 而不是 message_id：**自动采集条（`source="auto-collect"`）没有
+ *  message_id**，且一条 trace 可能同时挂着自动采集与人工确认两条。也正因如此，本地
+ *  标注行是「若有则回退」——自动采集条本就没有本地行，`local_reopened=false` 是正常的。
+ *
+ *  `trace_id` 必传：它是 `badcase_status.json` 的键，缺了状态就关不掉（那条会一直
+ *  留在回归集里）。后端只在「该 trace 已再无 BadCase 条目」时才关，所以从列表里逐条
+ *  移出时，只有最后一条的响应里 `status_closed` 才是 true。 */
+export async function removeBadcaseItem(
+  itemId: string,
+  opts: { traceId: string; threadId?: string; messageId?: string }
+): Promise<{
+  ok: boolean;
+  deleted_items: number;
+  remaining_items: number;
+  local_reopened: boolean;
+  status_closed: boolean;
+  warning?: string;
+}> {
+  const data = await request<{
+    ok: boolean;
+    deleted_items: number;
+    remaining_items: number;
+    local_reopened: boolean;
+    status_closed: boolean;
+    warning?: string;
+  }>("/api/feedback/annotations/revoke-badcase", {
+    method: "POST",
+    body: JSON.stringify({
+      item_id: itemId,
+      trace_id: opts.traceId,
+      thread_id: opts.threadId || "",
+      message_id: opts.messageId || "",
+    }),
+  });
+  if (!data.ok) throw new Error("移出失败");
+  return data;
+}
+
 /** 可被「删除」的四个本地状态（与后端 `store.ANNOTATION_DELETABLE` **逐字一致**）。
  *
  * `good` / `badcase` 不在其中：它们在 Langfuse 有产物（Dataset 条目、badcase_status
