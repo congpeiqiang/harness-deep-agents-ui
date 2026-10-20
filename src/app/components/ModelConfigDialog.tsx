@@ -457,7 +457,11 @@ export function ModelConfigPanel({ active = true, onChanged }: ModelConfigPanelP
         api_key: form.api_key, // 编辑时为空 → 后端保留原密钥
         api_protocol: form.api_protocol,
         models: cleanModels,
-        default_model: form.default_model,
+        // 归一：指向已删除模型时落空串，别把失效 id 存回去（后端不校验，只有在调用时
+        // 才会以 404/429 暴露；空串则照旧回退列表第一个）。
+        default_model: cleanModels.some((m) => m.id === form.default_model)
+          ? form.default_model
+          : "",
       });
       resetForm();
       onChanged?.();
@@ -497,11 +501,13 @@ export function ModelConfigPanel({ active = true, onChanged }: ModelConfigPanelP
     const m = form.models.find((mm) => mm.id.trim() === id);
     return m?.name?.trim() || id;
   };
-  // 默认值：显式 default_model 在列表里则用它，否则回退第一个模型
+  // 默认值：只在显式 default_model 且在列表里时回显。空串交给 Select 显示占位文案
+  // （「跟随列表第一个」）—— 以前这里回退 modelIds[0]，界面看着像已选中第一个模型，
+  // 但 form.default_model 仍是空串，保存后依旧为空，显示与存储对不上。
   const defaultModelValue =
     form.default_model && modelIds.includes(form.default_model)
       ? form.default_model
-      : modelIds[0] || "";
+      : "";
 
   const capacityInput = (
     index: number,
@@ -640,7 +646,7 @@ export function ModelConfigPanel({ active = true, onChanged }: ModelConfigPanelP
                     </span>
                     <span className="inline-flex items-center gap-1.5">
                       <span className="text-muted-foreground/70">默认模型</span>
-                      <span className="font-mono">{p.default_model || p.models[0]?.id || "-"}</span>
+                      <span className="font-mono">{p.default_model || "跟随列表第一个"}</span>
                     </span>
                   </div>
                 </div>
@@ -890,7 +896,7 @@ export function ModelConfigPanel({ active = true, onChanged }: ModelConfigPanelP
             onValueChange={(v) => set("default_model", v)}
           >
             <SelectTrigger className="h-9 text-xs">
-              <SelectValue placeholder="选择模型" />
+              <SelectValue placeholder="跟随列表第一个" />
             </SelectTrigger>
             <SelectContent>
               {form.models
