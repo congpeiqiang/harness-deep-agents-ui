@@ -755,9 +755,15 @@ export function useChat({
         { messages: [newMessage] },
         {
           ...DISCONNECT_CONTINUE,
+          // 新建会话时 threadId 为空，本轮 submit 会创建线程：**不能沿用 prev**。
+          // SDK 的 prev 是 historyValues（history.threadHead.values），而「提交即建线程」
+          // 这条路径会让 history 刷新被 submittingRef 闸跳过（stream.lgp.tsx:95-98），
+          // 仍指向上一个会话；一旦沿用，新线程的 values 就带上了别人的对话。
+          // 更致命的是 values 非 null 时 SDK 再也不看 history（`values ?? historyValues`，
+          // stream.lgp.tsx:243），界面会永久停在旧会话 —— 生产 01a15988（2026-10-20）：
+          // 服务端只有「你好」+ 问候两条，界面却渲染了上一个已停止会话的回复。
           optimisticValues: (prev) => ({
-            messages: [...(prev.messages ?? []), newMessage],
-
+            messages: [...(threadId ? (prev.messages ?? []) : []), newMessage],
           }),
           config: {
             ...(activeAssistant?.config ?? {}),
@@ -778,7 +784,7 @@ export function useChat({
       // Update thread list immediately when sending a message
       onHistoryRevalidate?.();
     },
-    [stream, activeAssistant?.config, onHistoryRevalidate]
+    [stream, threadId, activeAssistant?.config, onHistoryRevalidate]
   );
 
   const runSingleStep = useCallback(
