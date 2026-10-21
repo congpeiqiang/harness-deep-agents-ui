@@ -927,7 +927,10 @@ export function useChat({
 
   // 生成占位的图表/报告步骤（主 todos 匹配不到时）。
   // 进行中任务显示"待处理"占位，让用户看到图表/报告阶段；
-  // 已完成任务显示"已完成"占位（若 content 匹配失败）。
+  // 已完成任务显示"已完成"占位（若 content 匹配失败）；
+  // 终态非 success（error/cancelled/timeout/interrupted）显示"已取消"——
+  // auto-continue 只认 success，这些占位永远不会执行，别装成还在排队
+  // （2026-10-21 会话 01a15c08：timeout 任务的结果阶段永久 pending，看着像卡死）。
   const placeholderChartReport = useCallback(
     (taskId: string, title: string, suffix: "图表" | "报告", status?: string): TodoItem | null => {
       if (!title) return null;
@@ -935,10 +938,15 @@ export function useChat({
         .replace(/^查询/, "").replace(/^统计/, "").replace(/^计算/, "").trim();
       if (!clean) return null;
       const prefix = suffix === "图表" ? "渲染" : "生成";
+      const stepStatus: TodoItem["status"] =
+        status === "success"
+          ? "completed"
+          : status && TERMINAL_TASK_STATUSES.has(status)
+          ? "cancelled"
+          : "pending";
       const content = `${prefix} ${clean.slice(0, 20)}${suffix}`;
-      const stepStatus = status === "success" ? "completed" : "pending";
       // id 用 task_id 稳定（避免每次渲染生成新 id 导致闪烁）
-      return { id: `__placeholder_${suffix}_${taskId.slice(0, 8)}`, content, status: stepStatus as any };
+      return { id: `__placeholder_${suffix}_${taskId.slice(0, 8)}`, content, status: stepStatus };
     },
     []
   );
@@ -994,36 +1002,54 @@ export function useChat({
         // 导致进度从一开始就 completed、无过程；findReportTodo 只按 content 含"图表/报告"
         // 匹配主 todos 全局模板条目，不依赖标题，健壮。非活跃任务保持原逻辑（completed/pending 不串）。
         const isActiveResult = taskId === currentContinueTaskKeyRef.current;
+        // 状态以 async_tasks.status 为准（更可靠）。
+        // active_queries 仅作补充：active_queries[id]===false 可把 running 纠正为
+        // 实际完成状态（sync 写 false 表示任务已终止），但 active=true 不能把
+        // success 误判为 running（否则已完成任务会显示为"进行中"）。
+        const resolvedStatus: QueryTask["status"] = (() => {
+          const st = t?.status || "pending";
+          if (st === "running" && polledActiveQueries?.[id] === false) {
+            // 后端标记已终止但 async_tasks 仍 running（同步延迟）→ 视为 success
+            return "success" as const;
+          }
+          return st as QueryTask["status"];
+        })();
+        // 终态非 success（error/cancelled/timeout/interrupted）：auto-continue 只认
+        // success，结果阶段（图表/报告）永远不会执行 ⇒ 相应步骤一律标 cancelled
+        // （completed 的不动——可能是取消前已真实产出）。别管步骤来自占位符还是
+        // matchChartReport 模板匹配，否则失败任务的结果阶段会永久 pending，
+        // 看着像卡在半路（2026-10-21 会话 01a15c08）。
+        const deadTerminal =
+          resolvedStatus !== "success" &&
+          resolvedStatus !== "running" &&
+          resolvedStatus !== "pending";
+        const markCancelled = (s: TodoItem | null): TodoItem | null =>
+          deadTerminal && s && s.status !== "completed" && s.status !== "cancelled"
+            ? { ...s, status: "cancelled" }
+            : s;
         return {
           task_id: taskId,
           agent_name: t?.agent_name,
           title,
-          // 状态以 async_tasks.status 为准（更可靠）。
-          // active_queries 仅作补充：active_queries[id]===false 可把 running 纠正为
-          // 实际完成状态（sync 写 false 表示任务已终止），但 active=true 不能把
-          // success 误判为 running（否则已完成任务会显示为"进行中"）。
-          status: (() => {
-            const st = t?.status || "pending";
-            if (st === "running" && polledActiveQueries?.[id] === false) {
-              // 后端标记已终止但 async_tasks 仍 running（同步延迟）→ 视为 success
-              return "success" as const;
-            }
-            return st as QueryTask["status"];
-          })(),
+          status: resolvedStatus,
           created_at: t?.created_at || "",
           steps,
-          chartStep: isActiveResult
-            ? (findReportTodo(polledTodos || [], "图表") ||
-               matchChartReport(polledTodos || [], title, "图表") ||
-               placeholderChartReport(taskId, title, "图表", t?.status))
-            : (matchChartReport(polledTodos || [], title, "图表") ||
-               placeholderChartReport(taskId, title, "图表", t?.status)),
-          reportStep: isActiveResult
-            ? (findReportTodo(polledTodos || [], "报告") ||
-               matchChartReport(polledTodos || [], title, "报告") ||
-               placeholderChartReport(taskId, title, "报告", t?.status))
-            : (matchChartReport(polledTodos || [], title, "报告") ||
-               placeholderChartReport(taskId, title, "报告", t?.status)),
+          chartStep: markCancelled(
+            isActiveResult
+              ? (findReportTodo(polledTodos || [], "图表") ||
+                 matchChartReport(polledTodos || [], title, "图表") ||
+                 placeholderChartReport(taskId, title, "图表", t?.status))
+              : (matchChartReport(polledTodos || [], title, "图表") ||
+                 placeholderChartReport(taskId, title, "图表", t?.status))
+          ),
+          reportStep: markCancelled(
+            isActiveResult
+              ? (findReportTodo(polledTodos || [], "报告") ||
+                 matchChartReport(polledTodos || [], title, "报告") ||
+                 placeholderChartReport(taskId, title, "报告", t?.status))
+              : (matchChartReport(polledTodos || [], title, "报告") ||
+                 placeholderChartReport(taskId, title, "报告", t?.status))
+          ),
         };
       });
       // 最新置顶（created_at 降序）

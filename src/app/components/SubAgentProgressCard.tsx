@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Loader2, CircleCheck, Circle, AlertCircle } from "lucide-react";
+import { Loader2, CircleCheck, Circle, CircleSlash, AlertCircle } from "lucide-react";
 import type { TodoItem } from "@/app/types/types";
 
 // ── 类型定义 ──────────────────────────────────────────────────
@@ -30,6 +30,10 @@ function StepIcon({ status }: { status: TodoItem["status"] }) {
       return (
         <Loader2 size={14} className="shrink-0 animate-spin text-blue-500" />
       );
+    case "cancelled":
+      // 任务终态非 success 时，结果阶段占位不会再执行 —— ⊘ 明确「已取消」，
+      // 而不是永远灰圈 pending（2026-10-21 会话 01a15c08 的「卡在半路」观感）
+      return <CircleSlash size={14} className="shrink-0 text-gray-400" />;
     default:
       return <Circle size={14} className="shrink-0 text-gray-300" />;
   }

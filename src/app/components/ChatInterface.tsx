@@ -1430,12 +1430,27 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                               <div className="mt-1.5 flex flex-col">
                                 {doneTasks.map((qt) => {
                                   const qtErr = (asyncTasks as Record<string, any>)?.[qt.task_id]?.error as string | undefined;
+                                  // 终态非 success 的任务：结果阶段（图表/报告）占位已被
+                                  // useChat 标成 cancelled（auto-continue 只认 success，它们
+                                  // 永远不会执行）——展开行里如实显示「⊘ 已取消」，消除
+                                  // 「查询阶段完了、结果阶段卡在半路」的观感（2026-10-21
+                                  // 会话 01a15c08）。只渲染 cancelled 占位，不误伤真实完成
+                                  // 的图表/报告条目。
+                                  const cancelledSteps = [qt.chartStep, qt.reportStep].filter(
+                                    (s): s is TodoItem => s?.status === "cancelled"
+                                  );
                                   return (
                                     <div key={qt.task_id} className="flex flex-col gap-0.5 py-1 text-xs text-muted-foreground">
                                       <div className="flex items-center gap-2">
                                         <span className="w-3 shrink-0 text-center">{doneIcon(qt.status)}</span>
                                         <span className="truncate" title={qtErr || undefined}>{qt.title}</span>
                                       </div>
+                                      {cancelledSteps.map((s) => (
+                                        <div key={s.id} className="flex items-center gap-2 pl-5 text-muted-foreground/70">
+                                          <span className="w-3 shrink-0 text-center">⊘</span>
+                                          <span className="truncate">{s.content}（已取消）</span>
+                                        </div>
+                                      ))}
                                       {qtErr && (
                                         <div className="truncate pl-5 text-red-400" title={qtErr}>{qtErr}</div>
                                       )}

@@ -23,7 +23,9 @@ export interface FileItem {
 export interface TodoItem {
   id: string;
   content: string;
-  status: "pending" | "in_progress" | "completed" | "query";
+  // "cancelled"：任务终态非 success（error/cancelled/timeout/interrupted）时，
+  // 前端把不会再执行的结果阶段占位（图表/报告）标成已取消，而不是永久 pending。
+  status: "pending" | "in_progress" | "completed" | "query" | "cancelled";
   updatedAt?: Date;
 }
 
