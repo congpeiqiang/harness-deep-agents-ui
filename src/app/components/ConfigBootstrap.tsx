@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ConfigDialog } from "@/app/components/ConfigDialog";
 import { fetchDeploymentInfo } from "@/lib/deploymentInfo";
-import type { StandaloneConfig } from "@/lib/config";
+import { getConfig, type StandaloneConfig } from "@/lib/config";
 
 interface ConfigBootstrapProps {
   /** 自动配置成功时调用（父组件负责落 localStorage + 进入聊天页）。 */
@@ -36,7 +36,16 @@ export function ConfigBootstrap({ onReady }: ConfigBootstrapProps) {
       if (info) {
         // 部署 URL 存空串 = 跟随当前访问地址（语义见 lib/deploymentUrl.ts）：
         // 写死 origin 反而会把配置钉死在这个入口上。
-        onReady({ deploymentUrl: "", assistantId: info.assistantId });
+        //
+        // ⚠️ 先铺开本地已有配置再覆盖这两个字段（2026-10-22）：走到这里的场景之一，
+        // 是 page.tsx 发现「有配置但 assistantId 为空」而回落到本组件重新探测——
+        // 那种旧配置里还带着 queryKeywords / enableThinking / sqlApprovalPolicy 等
+        // 用户偏好，直接整体替换会把它们一起抹掉。
+        onReady({
+          ...(getConfig() ?? {}),
+          deploymentUrl: "",
+          assistantId: info.assistantId,
+        });
         return;
       }
       setPhase("fallback");

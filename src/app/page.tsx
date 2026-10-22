@@ -309,9 +309,16 @@ function HomePageContent() {
   // On mount, check for saved config. 本地无配置时**不再直接弹窗**（2026-09-28）：
   // 交给下面的 <ConfigBootstrap> 在登录之后自动探测（部署 URL 留空 + 服务端给的助手 ID），
   // 只有探测失败才回落到手动配置弹窗。
+  //
+  // ⚠️ 2026-10-22：「有配置」判定必须带上 **assistantId 非空**。以前只判 `savedConfig`
+  // 存在，于是清过浏览器数据（或探测失败的当场）留下的 `{deploymentUrl:"", assistantId:""}`
+  // 会被当成有效配置 ✅，可它既连不上、也**堵死了唯一的自愈通道**（<ConfigBootstrap>
+  // 只在 getConfig() === null 时才探测）。后果：此后每次发消息都带 `assistant_id: ""`，
+  // 后端 422 `Invalid assistant: ''`，界面上表现为「发了没反应」。
+  // 现在空助手 ID 一律按「无配置」处理 ⇒ 回落到 ConfigBootstrap 重新探测。
   useEffect(() => {
     const savedConfig = getConfig();
-    if (savedConfig) {
+    if (savedConfig?.assistantId) {
       setConfig(savedConfig);
       if (!assistantId) {
         setAssistantId(savedConfig.assistantId);

@@ -1,9 +1,10 @@
 "use client";
 // FIXME  MC8yOmFIVnBZMlhrdUp2bG43bmx2TG82VEVGaWRRPT06ZTZkMTMwYjU=
 
-import { createContext, useContext, useMemo, ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, ReactNode } from "react";
 import { Client } from "@langchain/langgraph-sdk";
 import { resolveDeploymentUrl } from "@/lib/deploymentUrl";
+import { installRunErrorSurface } from "@/lib/runErrorSurface";
 
 interface ClientContextValue {
   client: Client;
@@ -37,6 +38,13 @@ export function ClientProvider({
       },
     });
   }, [deploymentUrl, apiKey]);
+
+  // run 创建被 4xx 拒掉时会「发了没反应」（2026-10-22 实测 422 Invalid assistant），
+  // 挂全局 fetch 观察钩子把后端 detail 弹出来。放在这里是因为客户端在跑的页面
+  // 必然挂了本 Provider，且早于任何一次发送。
+  useEffect(() => {
+    installRunErrorSurface();
+  }, []);
 
   const value = useMemo(() => ({ client }), [client]);
 
