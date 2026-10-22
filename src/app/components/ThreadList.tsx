@@ -32,6 +32,7 @@ import { useThreads } from "@/app/hooks/useThreads";
 import { useClient } from "@/providers/ClientProvider";
 import { setThreadTitle } from "@/lib/threadMeta";
 import { forkThread } from "@/lib/threadFork";
+import { deleteThread } from "@/lib/threadDelete";
 import { searchThreads, type ThreadSearchResult } from "@/lib/threadSearch";
 
 type StatusFilter = "all" | "idle" | "busy" | "interrupted" | "error";
@@ -314,8 +315,10 @@ const toggleThread = useCallback((threadId: string) => {
     if (!confirm(`确定要删除选中的 ${selectedThreads.size} 条对话吗？`)) return;
     if (currentThreadId && selectedThreads.has(currentThreadId)) setCurrentThreadId(null);
     try {
+      // 走后端自定义端点：先取消这次在飞的 run 再删会话（SDK 的
+      // threads.delete 只删注册表行，run 会变孤儿继续跑）
       const results = await Promise.allSettled(
-        Array.from(selectedThreads).map(id => client.threads.delete(id))
+        Array.from(selectedThreads).map(id => deleteThread(id))
       );
       const failed = results.filter(r => r.status === 'rejected').length;
       mutateFn();
@@ -356,12 +359,17 @@ const toggleThread = useCallback((threadId: string) => {
         setCurrentThreadId(null);
       }
       try {
-        await client.threads.delete(threadId);
+        await deleteThread(threadId);
 
         mutateFn();
       } catch (error) {
         console.error("Failed to delete thread:", error);
-        alert("删除失败，请重试。");
+        // 后端会把「权限不足 / HTTP 5xx」等写进 error，直接给用户看
+        alert(
+          error instanceof Error && error.message
+            ? `删除失败：${error.message}`
+            : "删除失败，请重试。"
+        );
       } finally {
         setDeletingThreadId(null);
       }
