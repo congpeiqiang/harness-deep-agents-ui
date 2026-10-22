@@ -347,6 +347,12 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     setTurnStatus(null);
     quiescentPollsRef.current = 0;
     joinedRunIdRef.current = null;
+    // 方案3 的失败占位同样是常驻 state：A 会话排的 35s 定时器/已渲染占位不清，
+    // 切到 B 会话后会把「子任务「子任务」执行失败」渲染到 B 上（2026-10-22 dev-34：
+    // 标题退回「子任务」正是因为那个 taskId 根本不属于本会话的 async_tasks）。
+    failedFallbackTimersRef.current.forEach((t) => clearTimeout(t));
+    failedFallbackTimersRef.current.clear();
+    setFailedFallbackTasks(new Set());
   }, [threadId]);
 
   useEffect(() => {
@@ -442,6 +448,15 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
         approval: task.awaiting_approval as SqlApprovalPayload,
       }));
   }, [asyncTasks, resolvedApprovals, queryTasks]);
+
+  // 方案3 占位只渲染「本会话 async_tasks 里真的有」的任务——跨会话残留的 taskId
+  // 在这里就会被滤掉（读不到 async_tasks 时保留，避免轮询抖动闪没）。
+  const visibleFailedFallbacks = useMemo(() => {
+    const tasks = asyncTasks as Record<string, any> | null | undefined;
+    return Array.from(failedFallbackTasks).filter(
+      (taskId) => !tasks || typeof tasks !== "object" || taskId in tasks
+    );
+  }, [failedFallbackTasks, asyncTasks]);
 
   // ── 子智能体进度卡片：从 queryTasks 派生进度数据，在输入区合并展示 ──
   // 单个任务 = 查询阶段（子智能体步骤）+ 结果阶段（图表/报告）
@@ -1199,9 +1214,9 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
               })}
 
               {/* 方案3：子任务终态失败但方案1未自动汇报 → 聊天流兜底失败占位（双保险） */}
-              {failedFallbackTasks.size > 0 && (
+              {visibleFailedFallbacks.length > 0 && (
                 <div className="flex flex-col gap-2 pt-2">
-                  {Array.from(failedFallbackTasks).map((taskId) => {
+                  {visibleFailedFallbacks.map((taskId) => {
                     const t = (asyncTasks as Record<string, any>)?.[taskId];
                     const title =
                       queryTasks.find((q) => q.task_id === taskId)?.title ||
