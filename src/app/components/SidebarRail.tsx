@@ -2,7 +2,7 @@
 
 // 侧边栏折叠后的窄栏（对标 deepseek harness SidebarRoot 的 collapsed rail）：
 // 顶部品牌标记（点击展开）、新建会话、底部设置，仅图标 + 悬浮提示。
-import { SquarePen, Settings, Search, ListChecks } from "lucide-react";
+import { SquarePen, Settings, Search, ListChecks, CalendarClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WeintLogo } from "@/app/components/WeintLogo";
 
@@ -11,6 +11,7 @@ interface SidebarRailProps {
   onNewSession: () => void;
   onSearch: () => void;
   onBatch: () => void;
+  onSched: () => void;
   onSettings: () => void;
 }
 
@@ -19,6 +20,7 @@ export function SidebarRail({
   onNewSession,
   onSearch,
   onBatch,
+  onSched,
   onSettings,
 }: SidebarRailProps) {
   const iconBtn =
@@ -65,6 +67,16 @@ export function SidebarRail({
         title="批量管理"
       >
         <ListChecks className="size-5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className={iconBtn}
+        onClick={onSched}
+        aria-label="定时任务"
+        title="定时任务"
+      >
+        <CalendarClock className="size-5" />
       </Button>
       <div className="flex-1" />
       <Button

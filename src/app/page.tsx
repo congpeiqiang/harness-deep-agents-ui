@@ -13,6 +13,7 @@ import { ClientProvider, useClient } from "@/providers/ClientProvider";
 import { Settings, Download, MessageSquareWarning, FlaskConical } from "lucide-react";
 import Link from "next/link";
 import { ThreadList } from "@/app/components/ThreadList";
+import { ScheduledTasksPanel } from "@/app/components/ScheduledTasksPanel";
 import { WeintLogo } from "@/app/components/WeintLogo";
 import { SidebarRail } from "@/app/components/SidebarRail";
 import { ChatProvider } from "@/providers/ChatProvider";
@@ -44,6 +45,8 @@ function HomePageInner({
   // 搜索输入框展开态 / 批量管理模式（跨窄栏与展开态共享，窄栏点击图标可唤起）
   const [searchOpen, setSearchOpen] = useState(false);
   const [batchMode, setBatchMode] = useState(false);
+  // 定时任务面板：打开时在 aside 里替代 ThreadList/rail（batchMode 同款侧栏交互）
+  const [schedOpen, setSchedOpen] = useState(false);
 
   // 根治死线程 404：URL 带 threadId 时先探活再渲染。线程已不存在（后端重启/inmem
   // 注册表丢失）→ 自动清 threadId 开新会话，杜绝 useStreamThread 对死线程无限重连
@@ -228,7 +231,19 @@ function HomePageInner({
               collapsed ? "w-14" : "w-72"
             }`}
           >
-            {collapsed ? (
+            {schedOpen ? (
+              <ScheduledTasksPanel
+                onClose={() => setSchedOpen(false)}
+                onOpenThread={(id) => {
+                  // 重新武装探活闸：运行历史保留 thread_id 长达 90 天，而后端重启会
+                  // 孤儿化 inmem threads；不重探会让 ChatInterface 对死线程无限重连
+                  // （threadChecked 闸存在的初衷），404 时应toast提示并开新会话。
+                  setThreadChecked(false);
+                  void setThreadId(id);
+                  setSchedOpen(false);
+                }}
+              />
+            ) : collapsed ? (
               <SidebarRail
                 onExpand={() => setCollapsed(false)}
                 onNewSession={() => setThreadId(null)}
@@ -239,6 +254,12 @@ function HomePageInner({
                 onBatch={() => {
                   setCollapsed(false);
                   setBatchMode(true);
+                }}
+                onSched={() => {
+                  // 与 onSearch/onBatch 同款：先展开侧栏再开面板。否则面板会渲染进
+                  // w-14 窄栏被裁切，关闭按钮不可达（用户只能刷新页面逃生）。
+                  setCollapsed(false);
+                  setSchedOpen(true);
                 }}
                 onSettings={() => setConfigDialogOpen(true)}
               />
@@ -253,6 +274,7 @@ function HomePageInner({
                 onSearchOpenChange={setSearchOpen}
                 batchMode={batchMode}
                 onBatchModeChange={setBatchMode}
+                onSchedOpen={() => setSchedOpen(true)}
               />
             )}
           </aside>

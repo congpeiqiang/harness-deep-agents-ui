@@ -10,7 +10,7 @@ import {
   useCallback,
 } from "react";
 import { format } from "date-fns";
-import { Loader2, MessageSquare, X, Trash2, Square, CheckSquare, Pencil, Check, GitFork, Search, Plus, ListChecks, PanelLeftClose } from "lucide-react";
+import { Loader2, MessageSquare, X, Trash2, Square, CheckSquare, Pencil, Check, GitFork, Search, Plus, ListChecks, PanelLeftClose, CalendarClock } from "lucide-react";
 import { useQueryState } from "nuqs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -137,6 +137,8 @@ interface ThreadListProps {
   /** 批量管理模式（默认收起为图标） */
   batchMode?: boolean;
   onBatchModeChange?: (mode: boolean) => void;
+  /** 打开定时任务面板（page.tsx 在 aside 里整体切换） */
+  onSchedOpen?: () => void;
 }
 
 export function ThreadList({
@@ -148,6 +150,7 @@ export function ThreadList({
   onSearchOpenChange,
   batchMode = false,
   onBatchModeChange,
+  onSchedOpen,
 }: ThreadListProps) {
   const [currentThreadId, setCurrentThreadId] = useQueryState("threadId");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -502,6 +505,18 @@ const toggleThread = useCallback((threadId: string) => {
           >
             <ListChecks className="size-5" />
           </Button>
+          {onSchedOpen && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-9 rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={onSchedOpen}
+              aria-label="定时任务"
+              title="定时任务"
+            >
+              <CalendarClock className="size-5" />
+            </Button>
+          )}
           {onClose && (
             <Button
               variant="ghost"
