@@ -59,6 +59,20 @@ export type PinOptions = {
   date_bindings?: Record<string, string>;
 };
 
+/**
+ * 固化失败。`code` 是后端的失效码（`unmatched_date` / `ambiguous_date` / …），
+ * 调用方据此决定给不给下一步动作——`message` 只用来给人看。
+ */
+export class ScheduledPinError extends Error {
+  code: string;
+
+  constructor(message: string, code = "") {
+    super(message);
+    this.name = "ScheduledPinError";
+    this.code = code;
+  }
+}
+
 const apiBase = (): string => {
   const cfg = getConfig();
   // 留空 = window.location.origin（与 lib/deploymentUrl.ts 同口径）
@@ -80,7 +94,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const msg =
       (data as { error?: string } | null)?.error || `HTTP ${res.status}`;
-    throw new Error(msg);
+    throw new ScheduledPinError(msg, (data as { code?: string } | null)?.code || "");
   }
   return data as T;
 }

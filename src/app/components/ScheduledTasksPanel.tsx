@@ -71,6 +71,8 @@ import {
 import {
   pinScheduledTask,
   unpinScheduledTask,
+  ScheduledPinError,
+  type PinOptions,
   type ScheduledPin,
   type ScheduledTaskLike,
 } from "@/lib/scheduledPins";
@@ -379,14 +381,30 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
   const pinStatusOf = (t: ScheduledTask): "" | "active" | "invalid" =>
     (t as ScheduledTaskLike).pin_status || "";
 
-  const doPin = async (t: ScheduledTask) => {
+  const doPin = async (t: ScheduledTask, opts: PinOptions = {}): Promise<void> => {
     setBusyId(t.id);
     try {
       // 固化会真跑一次查询；成功后立刻把「渲染后的 SQL」摆给用户确认
-      const out = await pinScheduledTask(t.id);
+      const out = await pinScheduledTask(t.id, opts);
       setPinConfirm({ taskId: t.id, taskName: t.name, pin: out.pin });
       await load();
     } catch (e) {
+      // 「写死的日期对不上任何锚点」是唯一有可见下一步的失败：确认它是业务常量
+      // 就能当场以 accept_constants 重试。其余失效码只能去会话里改口径，如实报错。
+      if (
+        !opts.accept_constants &&
+        e instanceof ScheduledPinError &&
+        e.code === "unmatched_date"
+      ) {
+        if (
+          confirm(
+            `${e.message}\n\n确定把它当作业务常量固化？之后每次触发都会用同一个日期。`
+          )
+        ) {
+          await doPin(t, { ...opts, accept_constants: true });
+        }
+        return;
+      }
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setBusyId(null);
