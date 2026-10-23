@@ -23,6 +23,7 @@ import {
   Loader2,
   Pause,
   Pencil,
+  Pin,
   Play,
   Plus,
   RefreshCw,
@@ -67,6 +68,12 @@ import {
   type TaskPayload,
   type TaskRun,
 } from "@/lib/scheduledTasks";
+import {
+  pinScheduledTask,
+  unpinScheduledTask,
+  type ScheduledPin,
+  type ScheduledTaskLike,
+} from "@/lib/scheduledPins";
 
 interface ScheduledTasksPanelProps {
   /** 关闭面板回到会话列表 */
@@ -236,6 +243,14 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewErr, setPreviewErr] = useState("");
 
+  // 固化结果确认弹层：固化会**真跑一次查询**，跑完先把渲染后的 SQL 摆给用户
+  // 看——「日期填错一天」「SQL 被改坏」都在这一步暴露，而不是等明天定时跑歪。
+  const [pinConfirm, setPinConfirm] = useState<{
+    taskId: string;
+    taskName: string;
+    pin: ScheduledPin;
+  } | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError("");
@@ -358,6 +373,29 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
     } finally {
       setBusyId(null);
     }
+  };
+
+  /** 后端任务行已带 pin 字段，但 `scheduledTasks.ts` 的类型没跟上 ⇒ 结构化收窄。 */
+  const pinStatusOf = (t: ScheduledTask): "" | "active" | "invalid" =>
+    (t as ScheduledTaskLike).pin_status || "";
+
+  const doPin = async (t: ScheduledTask) => {
+    setBusyId(t.id);
+    try {
+      // 固化会真跑一次查询；成功后立刻把「渲染后的 SQL」摆给用户确认
+      const out = await pinScheduledTask(t.id);
+      setPinConfirm({ taskId: t.id, taskName: t.name, pin: out.pin });
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const doUnpin = (t: ScheduledTask) => {
+    if (!confirm(`取消「${t.name}」的固化查询？之后每次触发都会重新让模型写 SQL。`)) return;
+    void act(t.id, () => unpinScheduledTask(t.id), "已取消固化");
   };
 
   const showRuns = async (id: string, force = false) => {
@@ -528,6 +566,25 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
                   <span className="truncate text-sm font-medium" title={t.name}>
                     {t.name}
                   </span>
+                  {/* 固化状态：active=已固化（每次触发直接跑模板）；invalid=曾固化但已失效 */}
+                  {pinStatusOf(t) === "active" && (
+                    <span className="flex shrink-0 items-center gap-1 rounded-[4px] bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-600">
+                      <Pin className="size-3" />
+                      已固化
+                    </span>
+                  )}
+                  {pinStatusOf(t) === "invalid" && (
+                    <span
+                      className="flex shrink-0 items-center gap-1 rounded-[4px] bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-600"
+                      title={
+                        (t as ScheduledTaskLike).pin_invalid_reason ||
+                        "固化已失效，下次触发将重新由模型生成 SQL"
+                      }
+                    >
+                      <Pin className="size-3" />
+                      固化失效
+                    </span>
+                  )}
                   {inflight ? (
                     <span className="flex shrink-0 items-center gap-1 rounded-[4px] bg-blue-500/15 px-1.5 py-0.5 text-[10px] text-blue-500">
                       <Loader2 className="size-3 animate-spin" />
@@ -622,6 +679,36 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
                     <Pencil className="size-3.5" />
                     编辑
                   </Button>
+                  {/* 固化：把「跑对过的那一次」存成模板，之后每次触发直接执行 */}
+                  {pinStatusOf(t) === "active" ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 px-2 text-xs"
+                      disabled={busy}
+                      title="取消固化后，下次触发重新由模型写 SQL"
+                      onClick={() => doUnpin(t)}
+                    >
+                      <Pin className="size-3.5" />
+                      取消固化
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 px-2 text-xs"
+                      disabled={busy || inflight}
+                      title={
+                        inflight
+                          ? "运行中，等这次跑完再固化"
+                          : "把最近一次成功的查询存成模板，之后按当天日期直接执行"
+                      }
+                      onClick={() => void doPin(t)}
+                    >
+                      <Pin className="size-3.5" />
+                      {pinStatusOf(t) === "invalid" ? "重新固化" : "固化"}
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -695,6 +782,61 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
           })}
         </div>
       </ScrollArea>
+
+      {/* 固化确认弹层：把「按今天日期渲染后的 SQL」摆给用户看再收工 */}
+      <Dialog open={!!pinConfirm} onOpenChange={(o) => !o && setPinConfirm(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>固化查询已生成 —— 请确认</DialogTitle>
+          </DialogHeader>
+          {pinConfirm && (
+            <div className="flex flex-col gap-3 text-xs">
+              <div className="text-muted-foreground">
+                「{pinConfirm.taskName}」之后的每次触发都会按执行当天的日期执行下面这条查询，
+                不再由模型重写 SQL。请确认口径与日期范围无误。
+              </div>
+              {pinConfirm.pin.channel && (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">通道</span>
+                  <span className="rounded-[4px] bg-muted px-1.5 py-0.5 font-mono">
+                    {pinConfirm.pin.channel === "cube"
+                      ? "cube（语义层）"
+                      : "sql（物理库）"}
+                  </span>
+                </div>
+              )}
+              {Object.keys(pinConfirm.pin.params || {}).length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-muted-foreground">日期锚点</span>
+                  {Object.entries(pinConfirm.pin.params).map(([k, v]) => (
+                    <span key={k} className="rounded-[4px] bg-muted px-1.5 py-0.5 font-mono">
+                      {k} = {v}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {(pinConfirm.pin.warnings || []).length > 0 && (
+                <ul className="list-inside list-disc rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-amber-600">
+                  {pinConfirm.pin.warnings.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex flex-col gap-1">
+                <span className="text-muted-foreground">渲染后的查询</span>
+                <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-muted/40 p-3 font-mono text-[11px] leading-relaxed">
+                  {pinConfirm.pin.preview_sql || "（后端未返回 SQL）"}
+                </pre>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPinConfirm(null)}>
+              关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 创建/编辑弹层 */}
       <Dialog open={dialogOpen} onOpenChange={(o) => !saving && setDialogOpen(o)}>
