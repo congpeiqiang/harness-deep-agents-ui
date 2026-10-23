@@ -646,7 +646,9 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
                     {t.last_error}
                   </div>
                 )}
-                <div className="mt-2 flex items-center gap-1">
+                {/* 侧边栏只有 w-72（可用 264px），6 个按钮都 shrink-0 ⇒ 一行放不下。
+                    不换行的话最右边的「历史」会被推出卡片、再被 ScrollArea 视口裁掉。 */}
+                <div className="mt-2 flex flex-wrap items-center gap-1">
                   <Button
                     variant="ghost"
                     size="sm"
@@ -767,7 +769,7 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
                       runs.list.map((r) => (
                         <div
                           key={r.id}
-                          className="flex items-center gap-2 border-b border-border/40 py-1.5 text-xs last:border-b-0"
+                          className="flex flex-wrap items-center gap-2 border-b border-border/40 py-1.5 text-xs last:border-b-0"
                         >
                           <StatusIcon status={r.status} />
                           <span className="shrink-0">{fmtLocal(r.fired_at)}</span>
@@ -779,17 +781,36 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
                               {r.error}
                             </span>
                           )}
-                          <div className="flex-1" />
-                          {r.thread_id && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 shrink-0 px-2 text-xs"
-                              onClick={() => onOpenThread(r.thread_id)}
-                            >
-                              打开会话
-                            </Button>
-                          )}
+                          {/* 两个按钮打成一包：窄栏里要么整包留在行尾，要么整包换行，
+                              不会像逐个子项那样把右边那个挤出可视区（Button 自带 shrink-0）。 */}
+                          <div className="ml-auto flex shrink-0 items-center gap-1">
+                            {/* 固化来源默认是「最近一次成功」，跑歪了就没法回退到更早那次
+                                ——这里能把任意一轮的 thread_id 交回去（后端本来就支持）。 */}
+                            {r.status === "success" && r.thread_id && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 text-xs"
+                                disabled={busy}
+                                title="把这一轮跑出来的查询存成模板，之后每次触发按当天日期直接执行"
+                                onClick={() =>
+                                  void doPin(t, { thread_id: r.thread_id })
+                                }
+                              >
+                                用这次固化
+                              </Button>
+                            )}
+                            {r.thread_id && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 text-xs"
+                                onClick={() => onOpenThread(r.thread_id)}
+                              >
+                                打开会话
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       ))
                     )}
