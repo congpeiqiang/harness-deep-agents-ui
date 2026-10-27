@@ -48,6 +48,12 @@ export type ScheduledTaskLike = {
   name?: string;
   pin_status?: "" | "active" | "invalid";
   pin_invalid_reason?: string;
+  /**
+   * 固化来源那一轮 run 的 thread_id（后端 `pin_source_thread_id`）。
+   * 运行历史里用它给「就是这条被固化了」的行打标记——否则用户从某条历史
+   * 点过「用这次固化」之后，界面上没有任何地方还能认出是哪一条。
+   */
+  pin_source_thread_id?: string;
 };
 
 export type PinOptions = {

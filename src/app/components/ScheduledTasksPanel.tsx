@@ -277,7 +277,13 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
     listDatabases()
       .then((list) => {
         setDbs(list);
-        setForm((f) => (f.dbName ? f : { ...f, dbName: list[0]?.name || "" }));
+        // 未选库时跟随「设置 › 数据库」里勾选的默认库，没有默认才取第一个
+        // （与聊天页 DatabaseSelector 同一回退顺序，2026-10-23）
+        const fallback =
+          list.find((d) => (d as { is_default?: boolean }).is_default)?.name ||
+          list[0]?.name ||
+          "";
+        setForm((f) => (f.dbName ? f : { ...f, dbName: fallback }));
       })
       .catch((e) => {
         dbsLoaded.current = false;
@@ -380,6 +386,10 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
   /** 后端任务行已带 pin 字段，但 `scheduledTasks.ts` 的类型没跟上 ⇒ 结构化收窄。 */
   const pinStatusOf = (t: ScheduledTask): "" | "active" | "invalid" =>
     (t as ScheduledTaskLike).pin_status || "";
+
+  /** 固化来源那一轮的 thread_id：运行历史据此给对应行打「本次固化」标记。 */
+  const pinSourceOf = (t: ScheduledTask): string =>
+    (t as ScheduledTaskLike).pin_source_thread_id || "";
 
   const doPin = async (t: ScheduledTask, opts: PinOptions = {}): Promise<void> => {
     setBusyId(t.id);
@@ -576,6 +586,8 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
           {tasks.map((t) => {
             const chip = STATE_CHIP[t.state] || STATE_CHIP.scheduled;
             const inflight = !!t.running_thread_id;
+            const pinSrc = pinSourceOf(t);
+            const pinActive = pinStatusOf(t) === "active";
             const busy = busyId === t.id;
             const expanded = expandedId === t.id;
             return (
@@ -646,8 +658,10 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
                     {t.last_error}
                   </div>
                 )}
-                {/* 侧边栏只有 w-72（可用 264px），6 个按钮都 shrink-0 ⇒ 一行放不下。
-                    不换行的话最右边的「历史」会被推出卡片、再被 ScrollArea 视口裁掉。 */}
+                {/* 操作行实测 368px（6 个 shrink-0 按钮 + 6 个 gap）。面板打开时侧栏
+                    已加宽到 w-[27rem]（卡片内 381px）能并成一行；这里仍留 flex-wrap 兜底
+                    ——用户拖窗口、字号放大、出现「重新固化」等长文案时不至于被
+                    ScrollArea 视口横向裁掉（裁掉后按钮点不到，只能刷新页面逃生）。 */}
                 <div className="mt-2 flex flex-wrap items-center gap-1">
                   <Button
                     variant="ghost"
@@ -766,53 +780,76 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
                     ) : !runs || runs.taskId !== t.id || runs.list.length === 0 ? (
                       <div className="py-2 text-xs text-muted-foreground">还没有运行记录</div>
                     ) : (
-                      runs.list.map((r) => (
-                        <div
-                          key={r.id}
-                          className="flex flex-wrap items-center gap-2 border-b border-border/40 py-1.5 text-xs last:border-b-0"
-                        >
-                          <StatusIcon status={r.status} />
-                          <span className="shrink-0">{fmtLocal(r.fired_at)}</span>
-                          <span className="shrink-0 text-muted-foreground">
-                            {RUN_STATUS_LABEL[r.status] || r.status || "—"}
-                          </span>
-                          {r.error && (
-                            <span className="truncate text-red-500" title={r.error}>
-                              {r.error}
+                      runs.list.map((r) => {
+                        // 这一轮就是固化的来源：必须认得出是哪条历史，否则用户
+                        // 从某条点过「用这次固化」之后，界面上再无任何线索。
+                        const isPinRun = !!r.thread_id && r.thread_id === pinSrc;
+                        return (
+                          <div
+                            key={r.id}
+                            className="flex flex-wrap items-center gap-2 border-b border-border/40 py-1.5 text-xs last:border-b-0"
+                          >
+                            <StatusIcon status={r.status} />
+                            <span className="shrink-0">{fmtLocal(r.fired_at)}</span>
+                            <span className="shrink-0 text-muted-foreground">
+                              {RUN_STATUS_LABEL[r.status] || r.status || "—"}
                             </span>
-                          )}
-                          {/* 两个按钮打成一包：窄栏里要么整包留在行尾，要么整包换行，
-                              不会像逐个子项那样把右边那个挤出可视区（Button 自带 shrink-0）。 */}
-                          <div className="ml-auto flex shrink-0 items-center gap-1">
-                            {/* 固化来源默认是「最近一次成功」，跑歪了就没法回退到更早那次
-                                ——这里能把任意一轮的 thread_id 交回去（后端本来就支持）。 */}
-                            {r.status === "success" && r.thread_id && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 px-2 text-xs"
-                                disabled={busy}
-                                title="把这一轮跑出来的查询存成模板，之后每次触发按当天日期直接执行"
-                                onClick={() =>
-                                  void doPin(t, { thread_id: r.thread_id })
-                                }
-                              >
-                                用这次固化
-                              </Button>
+                            {r.error && (
+                              <span className="truncate text-red-500" title={r.error}>
+                                {r.error}
+                              </span>
                             )}
-                            {r.thread_id && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 px-2 text-xs"
-                                onClick={() => onOpenThread(r.thread_id)}
-                              >
-                                打开会话
-                              </Button>
-                            )}
+                            {/* 两个按钮打成一包：窄栏里要么整包留在行尾，要么整包换行，
+                                不会像逐个子项那样把右边那个挤出可视区（Button 自带 shrink-0）。 */}
+                            <div className="ml-auto flex shrink-0 items-center gap-1">
+                              {isPinRun && (
+                                <span
+                                  className={cn(
+                                    "flex shrink-0 items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-[10px]",
+                                    pinActive
+                                      ? "bg-emerald-500/15 text-emerald-600"
+                                      : "bg-amber-500/15 text-amber-600"
+                                  )}
+                                  title={
+                                    pinActive
+                                      ? "这条历史的查询就是当前固化模板的来源"
+                                      : "固化模板来自这条历史，但已失效——可在此重新固化"
+                                  }
+                                >
+                                  <Pin className="size-3" />
+                                  {pinActive ? "本次固化" : "固化来源"}
+                                </span>
+                              )}
+                              {/* 固化来源默认是「最近一次成功」，跑歪了就没法回退到更早那次
+                                  ——这里能把任意一轮的 thread_id 交回去（后端本来就支持）。 */}
+                              {r.status === "success" && r.thread_id && !(isPinRun && pinActive) && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-2 text-xs"
+                                  disabled={busy}
+                                  title="把这一轮跑出来的查询存成模板，之后每次触发按当天日期直接执行"
+                                  onClick={() =>
+                                    void doPin(t, { thread_id: r.thread_id })
+                                  }
+                                >
+                                  用这次固化
+                                </Button>
+                              )}
+                              {r.thread_id && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-2 text-xs"
+                                  onClick={() => onOpenThread(r.thread_id)}
+                                >
+                                  打开会话
+                                </Button>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 )}

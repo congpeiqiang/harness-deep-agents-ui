@@ -225,10 +225,15 @@ function HomePageInner({
         </header>
 
         <div className="flex flex-1 overflow-hidden">
-          {/* 侧边栏：展开=会话列表，折叠=窄栏（对标 deepseek harness rail） */}
+          {/* 侧边栏：展开=会话列表，折叠=窄栏（对标 deepseek harness rail）。
+              定时任务面板单独加宽到 w-[27rem]：卡片操作行实测需要 368px（运行 58 +
+              暂停 58 + 编辑 58 + 取消固化 82 + 删除 30 + 历史 58 + 6 个 gap），而
+              w-72 扣掉 ScrollArea/卡片三层 padding 后只剩 237px ⇒ 按钮被挤成三行，
+              「历史」被推到卡片外。w-[27rem] = 432 − 1(边框) − 24(列表 p-3) −
+              26(卡片边框+p-3) = 381px，主操作与历史按钮并成一行（留 13px 余量）。 */}
           <aside
             className={`relative flex-shrink-0 overflow-hidden border-r border-border bg-muted transition-[width] duration-200 ${
-              collapsed ? "w-14" : "w-72"
+              schedOpen ? "w-[27rem]" : collapsed ? "w-14" : "w-72"
             }`}
           >
             {schedOpen ? (
