@@ -115,7 +115,8 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const [collapsedRunningIds, setCollapsedRunningIds] = useState<Set<string>>(new Set());
   // 子智能体进度卡片：追踪任务开始时间用于计算 elapsed
   const taskStartTimesRef = useRef<Map<string, number>>(new Map());
-  // 选库：持久化到 localStorage，会话间保持；无历史值时留空（由 DatabaseSelector 显示 placeholder）
+  // 选库：持久化到 localStorage，会话间保持。无历史值时留空 —— 由
+  // DatabaseSelector 回落到「默认库 → 可见列表第一个」（2026-10-23）
   const [selectedDb, setSelectedDb] = useState<string>(() => {
     try {
       return localStorage.getItem("selectedDb") || "";
@@ -1626,8 +1627,11 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                 />
                 <DatabaseSelector
                   value={selectedDb}
-                  onChange={(v) => {
+                  onChange={(v, opts) => {
                     setSelectedDb(v);
+                    // 只持久化用户主动选择：自动回落到默认库不算偏好，
+                    // 否则管理员以后改默认库老用户永远不会跟着变
+                    if (opts?.auto) return;
                     try {
                       localStorage.setItem("selectedDb", v);
                     } catch {

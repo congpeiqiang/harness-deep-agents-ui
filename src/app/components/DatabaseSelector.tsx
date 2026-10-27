@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listDatabases, type DbInfo } from "@/lib/dbConfig";
 import {
   Select,
@@ -13,7 +13,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 interface Props {
   value: string;
-  onChange: (v: string) => void;
+  // auto=true：回落默认库/首个库时调用，不是用户主动选择 ⇒ 调用方不要把它
+  // 当成「用户偏好」持久化（否则管理员以后改默认库，老用户永远停在旧默认上）
+  onChange: (v: string, opts?: { auto?: boolean }) => void;
 }
 
 const typeLabel = (t: string): string => (t || "mysql").toUpperCase();
@@ -49,14 +51,22 @@ export function DatabaseSelector({ value, onChange }: Props) {
   // 工作区是单一且路径钉死的，没有切换动作，也不再有 workspace-changed 事件。
   // 库列表刷新由上面的 databases-changed 与首次挂载的 refresh() 负责。
 
-  const list = dbs ?? [];
+  const list = useMemo(() => dbs ?? [], [dbs]);
   const current = list.find((d) => d.name === value);
 
-  // 当选中的库不在列表中时（如删除了所有数据库），自动清空选中值
+  // 选中的库不在列表时回落：默认库 → 可见列表第一个 → 空（列表本身为空）。
+  // 触发场景：首次进入 / 换浏览器（localStorage 无值）、库被删、权限被收回。
+  // 空 db_name 不会报错，但后端 tool_filter 会因此不裁剪、把**所有库**的
+  // wrenai 工具都暴露给模型；且界面上看不出当前用哪个库。2026-10-23 拍板：
+  // 没本地选择就落到「设置 › 数据库」里勾了「设为默认」的库，没有则第一个。
   useEffect(() => {
-    if (dbs !== null && value && !list.find((d) => d.name === value)) {
-      onChange("");
-    }
+    if (dbs === null) return;
+    if (value && list.some((d) => d.name === value)) return;
+    const next =
+      list.find((d) => (d as { is_default?: boolean }).is_default)?.name ||
+      list[0]?.name ||
+      "";
+    if (next !== value) onChange(next, { auto: true });
   }, [dbs, value, list, onChange]);
 
   const tooltipText = error ? "配置服务不可用" : "切换数据库";

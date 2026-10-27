@@ -29,6 +29,7 @@ import {
   type DbUpsertPayload,
   type WrenProjectInfo,
 } from "@/lib/dbConfig";
+import { Switch } from "@/components/ui/switch";
 import {
   listSemanticProjects,
   type SemanticProject,
@@ -41,7 +42,13 @@ interface DbConfigPanelProps {
   onChanged?: () => void; // 配置变更后通知（如刷新下拉列表）
 }
 
-interface FormState extends DbUpsertPayload {}
+// is_default 后端已支持（2026-10-23），但 @/lib/dbConfig 的 DbInfo/DbUpsertPayload
+// 类型尚未收录该字段 ⇒ 这里用结构类型补上，避免改 lib 只为一处类型。
+type DbWithDefault = DbInfo & { is_default?: boolean };
+
+interface FormState extends DbUpsertPayload {
+  is_default?: boolean;
+}
 
 // Radix Select 禁止 SelectItem 空字符串 value（会报
 // "A <Select.Item /> must have a value prop that is not an empty string"），
@@ -57,6 +64,7 @@ const EMPTY_FORM: FormState = {
   user: "",
   password: "",
   wren_project: "",
+  is_default: false,
 };
 
 const typeLabel = (t: string): string => (t || "mysql").toUpperCase();
@@ -155,6 +163,7 @@ export function DbConfigPanel({ active = true, onChanged }: DbConfigPanelProps) 
       user: d.user || "",
       password: "", // 编辑时留空表示保留原密码
       wren_project: d.wren_project || "",
+      is_default: Boolean((d as DbWithDefault).is_default),
     });
     setTestResult(null);
     setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
@@ -252,6 +261,11 @@ export function DbConfigPanel({ active = true, onChanged }: DbConfigPanelProps) 
                           <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">语义层</span>
                         ) : (
                           <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">直连</span>
+                        )}
+                        {(d as DbWithDefault).is_default && (
+                          <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600">
+                            默认
+                          </span>
                         )}
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
@@ -480,6 +494,19 @@ export function DbConfigPanel({ active = true, onChanged }: DbConfigPanelProps) 
               <p className="text-[11px] leading-tight text-muted-foreground">
                 配置后该库走语义库查询（工具名 wrenai_&lt;库名&gt;_*），需重启后端生效。
               </p>
+            </div>
+            <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+              <div>
+                <Label>设为默认数据库</Label>
+                <p className="mt-0.5 text-[11px] leading-tight text-muted-foreground">
+                  聊天页在「没手动选过库 / 换了浏览器」时默认用它。全局只有一个默认库，
+                  勾选后会取消原来的默认库；用户自己在下拉里选过的库以本地选择为准。
+                </p>
+              </div>
+              <Switch
+                checked={Boolean(form.is_default)}
+                onCheckedChange={(v) => set("is_default", v)}
+              />
             </div>
 
             {testResult && (
