@@ -4,6 +4,8 @@ import React, {
   useState,
   useMemo,
   useCallback,
+  useEffect,
+  useRef,
   memo,
   useDeferredValue,
 } from "react";
@@ -107,6 +109,20 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
       {}
     );
 
+    // 审批中断是**后到**的：卡片在 tool_call 一出现就挂载了（那一刻还没有
+    // actionRequest），而上面 useState 的初值只跑一次 ⇒ 中断到达后 isExpanded
+    // 仍是 false，用户必须先点一下工具名才看得见「批准/编辑/拒绝」。
+    // 这里补两件事：中断一到就展开，并把它滚到视口中间——审批要人做决定，
+    // 不能藏在折叠的卡片里等用户去发现。
+    const boxRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+      if (actionRequest) setIsExpanded(true);
+    }, [actionRequest]);
+    useEffect(() => {
+      if (!actionRequest || !isExpanded) return;
+      boxRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, [actionRequest, isExpanded]);
+
     const { name, args, result, status } = useMemo(() => {
       return {
         name: toolCall.name || "Unknown Tool",
@@ -118,9 +134,11 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
 
     const argsKeys = useMemo(() => Object.keys(args), [args]);
     const argsEntries = useMemo(() => Object.entries(args), [args]);
+    // actionRequest 也算「有内容」：审批卡必须能渲染，不能被「看着没参数」的
+    // 启发式连卡片一起藏掉（那样用户会以为审批根本没弹出来）。
     const hasContent = useMemo(
-      () => result || argsKeys.length > 0,
-      [result, argsKeys.length]
+      () => !!(result || argsKeys.length > 0 || actionRequest),
+      [result, argsKeys.length, actionRequest]
     );
 
     const deferredResult = useDeferredValue(result);
@@ -191,6 +209,7 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
 
     return (
       <div
+        ref={boxRef}
         className={cn(
           "w-full overflow-hidden rounded-lg border-none shadow-none outline-none transition-colors duration-200 hover:bg-accent",
           isExpanded && hasContent && "bg-accent"
