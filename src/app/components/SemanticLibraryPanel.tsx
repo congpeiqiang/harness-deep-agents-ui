@@ -631,7 +631,7 @@ export function SemanticLibraryPanel({ active = true, onChanged }: SemanticLibra
       </div>
 
       {/* 添加对话框
-          ⚠️ 外层**必须可滚** —— 与「调整模型」弹层同因（2026-10-08 生产事故）：错误/提示框是
+          ⚠️ 外层**必须可滚** —— 与「调整数据源」（旧名「调整模型」）弹层同因（2026-10-08 生产事故）：错误/提示框是
           `whitespace-pre-wrap` 的**无上限**内容（新建失败时后端会把整段报错/清单贴回来），
           弹窗被顶高后 `items-center` 会把**页脚按钮整行顶出可视区**；外层原来既不可滚
           也没有 max-h ⇒ 按钮滚都滚不到。短内容仍居中（`my-auto` 优先于 `items-start`），
@@ -925,7 +925,7 @@ function ProjectCard({
             onClick={() => setAdjusting(true)}
             disabled={myBuildBusy || myPullBusy || myAdoptBusy || myDeleteBusy}
           >
-            ⚙️ 调整模型
+            ⚙️ 调整数据源
           </Button>
           <Button
             variant="outline"
@@ -1087,7 +1087,7 @@ function AddDialog({
 
 // ── 新建流程对话框 ───────────────────────────────────────────
 
-/* ── 表/字段选择（新建流程与「调整模型」共用）─────────────────────────────
+/* ── 表/字段选择（新建流程与「调整数据源」共用）───────────────────────────
  *
  * 隐藏字段用 wren 原生的 `is_hidden` 表达（后端写进 metadata.yml）。
  * **结构列必须保持可见**：主键列、以及被自动生成的外键关系引用的列。
