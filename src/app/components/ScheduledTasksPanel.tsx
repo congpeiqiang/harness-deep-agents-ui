@@ -69,6 +69,7 @@ import {
   type TaskRun,
 } from "@/lib/scheduledTasks";
 import {
+  pinAnchorLabel,
   pinScheduledTask,
   unpinScheduledTask,
   ScheduledPinError,
@@ -253,6 +254,17 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
     pin: ScheduledPin;
   } | null>(null);
 
+  // 日期歧义选择框：同一个日期可能既是「昨天」又是「本周开始」（周二），也可能是
+  // 「今天」与「本月 1 号」（每月 1 号）——**改措辞也区分不了**，只能让用户点选。
+  // 旧做法是让用户「去会话里改说法」，白费一场：换个说法写出来的还是同一个日期。
+  const [pinAsk, setPinAsk] = useState<{
+    taskId: string;
+    taskName: string;
+    literal: string;
+    candidates: string[];
+    opts: PinOptions;
+  } | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError("");
@@ -399,8 +411,17 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
       setPinConfirm({ taskId: t.id, taskName: t.name, pin: out.pin });
       await load();
     } catch (e) {
-      // 「写死的日期对不上任何锚点」是唯一有可见下一步的失败：确认它是业务常量
-      // 就能当场以 accept_constants 重试。其余失效码只能去会话里改口径，如实报错。
+      // 两种失败有可见的下一步，其余只能如实报错：
+      // 1) 日期歧义 → 弹候选锚点让用户点选，选中后带 date_bindings 重试；
+      // 2) 日期对不上任何锚点 → 确认是业务常量即可 accept_constants 重试。
+      if (e instanceof ScheduledPinError && e.code === "ambiguous_date") {
+        const literal = e.extra?.literal || "";
+        const candidates = e.extra?.candidates || [];
+        if (literal && candidates.length > 1) {
+          setPinAsk({ taskId: t.id, taskName: t.name, literal, candidates, opts });
+          return;
+        }
+      }
       if (
         !opts.accept_constants &&
         e instanceof ScheduledPinError &&
@@ -419,6 +440,19 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
     } finally {
       setBusyId(null);
     }
+  };
+
+  /** 用户选定了日期口径 → 带 `date_bindings`（日期字面量 → 锚点名）重试固化。 */
+  const choosePinAnchor = (anchor: string) => {
+    const ask = pinAsk;
+    setPinAsk(null);
+    if (!ask) return;
+    const t = tasks.find((x) => x.id === ask.taskId);
+    if (!t) return;
+    void doPin(t, {
+      ...ask.opts,
+      date_bindings: { ...(ask.opts.date_bindings || {}), [ask.literal]: anchor },
+    });
   };
 
   const doUnpin = (t: ScheduledTask) => {
@@ -909,6 +943,45 @@ export function ScheduledTasksPanel({ onClose, onOpenThread }: ScheduledTasksPan
           <DialogFooter>
             <Button variant="outline" onClick={() => setPinConfirm(null)}>
               关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 日期歧义选择：同一天撞两个口径锚点时，只有用户知道报表该按哪个口径 */}
+      <Dialog open={!!pinAsk} onOpenChange={(o) => !o && setPinAsk(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>这个日期按哪个口径算？</DialogTitle>
+          </DialogHeader>
+          {pinAsk && (
+            <div className="flex flex-col gap-3 text-xs">
+              <div className="text-muted-foreground">
+                「{pinAsk.taskName}」的查询里，日期{" "}
+                <span className="font-mono text-foreground">{pinAsk.literal}</span>{" "}
+                同时对应下面几个口径。请选一个——固化后每次触发都按它取日期，
+                选错就是每个月都查错一段时间的数。
+              </div>
+              <div className="flex flex-col gap-2">
+                {pinAsk.candidates.map((a) => (
+                  <Button
+                    key={a}
+                    variant="outline"
+                    className="h-auto justify-start px-3 py-2 text-xs"
+                    onClick={() => choosePinAnchor(a)}
+                  >
+                    <span className="font-medium">{pinAnchorLabel(a)}</span>
+                    <span className="ml-2 font-mono text-muted-foreground text-[11px]">
+                      {a}
+                    </span>
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPinAsk(null)}>
+              取消
             </Button>
           </DialogFooter>
         </DialogContent>

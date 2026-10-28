@@ -61,7 +61,10 @@ export type PinOptions = {
   thread_id?: string;
   /** 允许把写死的日期当作常量固化（默认拒绝，避免固化一次就永远查同一天） */
   accept_constants?: boolean;
-  /** 同一日期匹配多个锚点时的消歧（占位符名 → 日期） */
+  /**
+   * 同一日期匹配多个锚点时的消歧：**日期字面量 → 锚点名**
+   * （如 `{ "2026-10-26": "yesterday" }`）。用户点选的正是这个映射。
+   */
   date_bindings?: Record<string, string>;
 };
 
@@ -71,13 +74,44 @@ export type PinOptions = {
  */
 export class ScheduledPinError extends Error {
   code: string;
+  /**
+   * 机读补充数据（目前只有 `ambiguous_date` 的 `literal` + `candidates`）。
+   * 文案（`message`）只给人看，程序判断一律走 `code` / `extra`。
+   */
+  extra: PinErrorExtra;
 
-  constructor(message: string, code = "") {
+  constructor(message: string, code = "", extra: PinErrorExtra = {}) {
     super(message);
     this.name = "ScheduledPinError";
     this.code = code;
+    this.extra = extra;
   }
 }
+
+export type PinErrorExtra = {
+  /** 撞了多个锚点的那个日期字面量（YYYY-MM-DD） */
+  literal?: string;
+  /** 候选锚点名（占位符名，如 yesterday / week_start） */
+  candidates?: string[];
+};
+
+/**
+ * 锚点 → 中文标签。同一天可能既是「昨天」又是「本周开始」（周二），也可能既是
+ * 「今天」又是「本月 1 号」（每月 1 号）——日期字面量分不出来，选择框必须说人话。
+ */
+export const PIN_ANCHOR_LABELS: Record<string, string> = {
+  today: "今天",
+  yesterday: "昨天",
+  tomorrow: "明天",
+  week_start: "本周开始（周一）",
+  month_start: "本月 1 号",
+  last_month_start: "上月 1 号",
+  last_month_end: "上月末",
+  year_start: "今年 1 月 1 号",
+};
+
+export const pinAnchorLabel = (anchor: string): string =>
+  PIN_ANCHOR_LABELS[anchor] || anchor;
 
 const apiBase = (): string => {
   const cfg = getConfig();
@@ -100,7 +134,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const msg =
       (data as { error?: string } | null)?.error || `HTTP ${res.status}`;
-    throw new ScheduledPinError(msg, (data as { code?: string } | null)?.code || "");
+    const err = data as
+      | { code?: string; extra?: PinErrorExtra }
+      | null;
+    throw new ScheduledPinError(msg, err?.code || "", err?.extra || {});
   }
   return data as T;
 }
